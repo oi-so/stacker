@@ -12,25 +12,26 @@ RAW_EXTENSIONS = {
     '.bay', '.cap', '.iiq', '.rwl', '.raw'
 }
 FITS_EXTENSIONS = {'.fits', '.fit', '.fts'}
-JPEG_EXTENSIONS = {'.jpg', '.jpeg'}
-PING_EXTENSIONS = {'.png'}
+
+
+LOADERS = {
+    'raw': (RAW_EXTENSIONS, load_raw_info, load_raw_image),
+    'fits': (FITS_EXTENSIONS, load_fits_info, load_fits_image),
+}
+
 
 def load_info(path: Path) -> AstroImage:
     ext = path.suffix.lower()
-    if ext in RAW_EXTENSIONS:
-        return load_raw_info(path)
-    elif ext in FITS_EXTENSIONS:
-        return load_fits_info(path)
-
+    for loader_name, (extensions, info_loader, image_loader) in LOADERS.items():
+        if ext in extensions:
+            return info_loader(path)
     return load_standard_info(path)
 
 
 def load_image(astro_image: AstroImage) -> np.ndarray:
     path = astro_image.info.path
     ext = path.suffix.lower()
-    if ext in RAW_EXTENSIONS:
-        return load_raw_image(path)
-    elif ext in FITS_EXTENSIONS:
-        return load_fits_image(path)
-
+    for loader_name, (extensions, info_loader, image_loader) in LOADERS.items():
+        if ext in extensions:
+            return image_loader(path)
     return load_standard_image(path)
