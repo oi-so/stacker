@@ -14,12 +14,12 @@ class ImageManager:
     def __evict_if_needed(self) -> None:
         while len(self.__loaded_images) > self.max_loaded_image_count:
             _, image = self.__loaded_images.popitem(last=False)
-            image.data = None
+            image.image = None
     
 
-    def get_data(self, image: AstroImage) -> np.ndarray:
-        if image.data is not None:
-            image.data = load_image(image)
+    def get_image(self, image: AstroImage) -> np.ndarray:
+        if image.image is not None:
+            image.image = load_image(image)
 
         key = id(image)
         if key in self.__loaded_images:
@@ -28,11 +28,11 @@ class ImageManager:
             self.__loaded_images[key] = image
 
         self.__evict_if_needed()
-        return image.data
+        return image.image
 
 
     def load(self, image: AstroImage) -> None:
-        self.get_data(image)
+        self.get_image(image)
 
 
     def unload(self, image: AstroImage) -> None:
@@ -40,12 +40,12 @@ class ImageManager:
         if key in self.__loaded_images:
             del self.__loaded_images[key]
 
-        image.data = None
+        image.image = None
 
 
     def unload_all(self) -> None:
         for image in self.__loaded_images.values():
-            image.data = None
+            image.image = None
         self.__loaded_images.clear()
 
 
@@ -55,4 +55,7 @@ class ImageManager:
 
     def loaded_count(self) -> int:
         return len(self.__loaded_images)
+    
+
+
     

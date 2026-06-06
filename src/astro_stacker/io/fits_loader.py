@@ -47,7 +47,7 @@ def load_fits_info(path: Path) -> AstroImage:
         exif=dict(header),
         wcs=wcs
     )
-    return AstroImage(info=info, data=None) 
+    return AstroImage(info=info, image=None) 
 
 
 def load_fits_image(path: Path) -> np.ndarray:

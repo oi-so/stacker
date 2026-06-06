@@ -65,17 +65,17 @@ class AstroImageInfo:
 @dataclass
 class AstroImage:
     info: AstroImageInfo
-    data: np.ndarray | None
+    image: np.ndarray | None
 
     @property
     def is_loaded(self) -> bool:
-        return self.data is not None
+        return self.image is not None
     
     def load(self) -> None:
         from .loader import load_image
 
-        if self.data is None:
-            self.data = load_image(self)
+        if self.image is None:
+            self.image = load_image(self)
 
     def unload(self) -> None:
-        self.data = None
+        self.image = None

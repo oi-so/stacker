@@ -23,7 +23,7 @@ def load_standard_info(path: Path) -> AstroImage:
                 iso=exif_data.get('EXIF ISOSpeedRatings').values[0] if 'EXIF ISOSpeedRatings' in exif_data else None,
                 exif={tag: str(value) for tag, value in exif_data.items()}
             ),
-            data=None
+            image=None
         )
     
 
