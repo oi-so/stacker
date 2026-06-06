@@ -25,7 +25,8 @@ def load_info(path: Path) -> AstroImage:
     return load_standard_info(path)
 
 
-def load_image(path: Path) -> np.ndarray:
+def load_image(astro_image: AstroImage) -> np.ndarray:
+    path = astro_image.info.path
     ext = path.suffix.lower()
     if ext in RAW_EXTENSIONS:
         return load_raw_image(path)

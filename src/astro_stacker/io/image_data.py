@@ -75,7 +75,7 @@ class AstroImage:
         from .loader import load_image
 
         if self.data is None:
-            self.data = load_image(self.info.path)
+            self.data = load_image(self)
 
     def unload(self) -> None:
         self.data = None
