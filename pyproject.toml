@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astro-stack"
+version = "0.1.0"
+description = "Astronomical image stacking application"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+
+authors = [
+{ name = "Your Name" }
+]
+
+keywords = [
+"astronomy",
+"astrophotography",
+"stacking",
+"fits",
+"raw",
+"platesolve"
+]
+
+classifiers = [
+"Programming Language :: Python :: 3",
+"Operating System :: OS Independent",
+"Topic :: Scientific/Engineering :: Astronomy"
+]
+
+dependencies = [
+"numpy>=2.0",
+"scipy>=1.14",
+"astropy>=7.0",
+"photutils>=2.0",
+"rawpy>=0.24",
+"opencv-python>=4.11",
+"tifffile>=2025.1",
+"fitsio>=1.2",
+"pillow>=11.0",
+"psutil>=7.0",
+"pyqt6>=6.8",
+"pyqtgraph>=0.13",
+"pandas>=2.2",
+"scikit-image>=0.25",
+"astroquery>=0.4",
+"tomli-w>=1.2",
+]
+
+[project.optional-dependencies]
+
+dev = [
+"pytest>=8.3",
+"pytest-cov>=6.0",
+"black>=25.0",
+"ruff>=0.11",
+"mypy>=1.15"
+]
+
+gpu = [
+"cupy-cuda12x"
+]
+
+[project.scripts]
+astro-stack = "astro_stack.app:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = [
+"tests"
+]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
