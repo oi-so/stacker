@@ -1,7 +1,7 @@
 from collections import OrderedDict
 import numpy as np
 
-from .image_data import AstroImage
+from .image_data import AstroImage, AstroImageInfo
 from .loader import load_image
 
 
@@ -18,7 +18,7 @@ class ImageManager:
     
 
     def get_image(self, image: AstroImage) -> np.ndarray:
-        if image.image is not None:
+        if image.image is None:
             image.image = load_image(image)
 
         key = id(image)
@@ -55,7 +55,3 @@ class ImageManager:
 
     def loaded_count(self) -> int:
         return len(self.__loaded_images)
-    
-
-
-    
