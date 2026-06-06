@@ -3,7 +3,7 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "astro-stack"
+name = "astro-stacker"
 version = "0.1.0"
 description = "Astronomical image stacking application"
 readme = "README.md"
@@ -46,6 +46,7 @@ dependencies = [
 "scikit-image>=0.25",
 "astroquery>=0.4",
 "tomli-w>=1.2",
+"exifread>=3.5.1"
 ]
 
 [project.optional-dependencies]
@@ -63,7 +64,7 @@ gpu = [
 ]
 
 [project.scripts]
-astro-stack = "astro_stack.app:main"
+astro-stacker = "astro_stacker.app:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -87,3 +88,10 @@ python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+[dependency-groups]
+dev = [
+    "exifread>=3.5.1",
+    "pytest>=9.0.3",
+    "uv>=0.11.19",
+]
