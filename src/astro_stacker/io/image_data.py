@@ -78,4 +78,5 @@ class AstroImage:
             self.image = load_image(self)
 
     def unload(self) -> None:
+        del self.image
         self.image = None

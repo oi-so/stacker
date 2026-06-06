@@ -11,6 +11,9 @@ from .image_data import AstroImageInfo, AstroImage, WCSData, ImageShape
 
 
 def load_fits_info(path: Path) -> AstroImage:
+    """
+    Load FITS image metadata and return an `AstroImage` with the metadata filled in without the image data.
+    """
     with fits.open(path) as hdul:
         hud = cast(PrimaryHDU, hdul[0])
         header = hud.header
@@ -51,6 +54,8 @@ def load_fits_info(path: Path) -> AstroImage:
 
 
 def load_fits_image(path: Path) -> np.ndarray:
+    """Load FITS image data as a NumPy array"""
+
     data = fits.getdata(path)
 
     if data is None:
