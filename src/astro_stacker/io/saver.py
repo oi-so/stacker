@@ -9,10 +9,12 @@ def save_tiff(image: np.ndarray, path: Path) -> None:
 
 
 def save_preview_tiff(image, path):
-    img = image.copy()
+    img = image.astype(np.float32).copy()
 
     img -= img.min()
-    img /= img.max()
+
+    if img.max() > 0:
+        img /= img.max()
 
     img = (img * 65535).astype(np.uint16)
 
