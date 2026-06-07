@@ -3,7 +3,7 @@ import numpy as np
 from pathlib import Path
 
 from ..io.image_data import AstroImage
-from ..io.image_manager import ImageManager
+from ..conbination.provider import FrameProvider
 
 
 
@@ -46,18 +46,18 @@ class Calibrator:
     def calibrate(self, image: np.ndarray) -> np.ndarray:
         image = image.astype(np.float32)
 
-        if self.pipeline.use_darks and self.master.dark:
+        if self.pipeline.use_darks and self.master.dark is not None:
             dark = self.master.dark
             image -= dark
 
-        if self.pipeline.use_biases and self.master.bias:
+        if self.pipeline.use_biases and self.master.bias is not None:
             bias = self.master.bias
             image -= bias
 
-        if self.pipeline.use_flats and self.master.flat:
+        if self.pipeline.use_flats and self.master.flat is not None:
             flat = self.master.flat
-            if self.pipeline.use_flat_darks and self.master.flat_dark:
-                flat_dark = self.master.dark
+            if self.pipeline.use_flat_darks and self.master.flat_dark is not None:
+                flat_dark = self.master.flat_dark
                 flat -= flat_dark
 
             flat = flat / np.mean(flat)
@@ -66,20 +66,43 @@ class Calibrator:
         return image
     
 
+@dataclass
+class CalibrationResult:
+    image: np.ndarray
+    applied: list[str]
+
+
+class CalibrationManager:
+    def __init__(self, calibrators: list[Calibrator] | None = None) -> None:
+        self.calibrators = calibrators or []
+
+    def register(self, calibrator: Calibrator) -> None:
+        self.calibrators.append(calibrator)
+
+    def apply_all(self, image: np.ndarray) -> CalibrationResult:
+        result_image = image
+        applied: list[str] = []
+
+        for calibrator in self.calibrators:
+            result_image = calibrator.calibrate(result_image)
+            applied.append(type(calibrator).__name__)
+
+        return CalibrationResult(image=result_image, applied=applied)
+
 
 def sigma_clip():
     pass
 
 
 class MasterFrameBuilder:
-    def __init__(self, manager: ImageManager):
-        self.manager = manager
+    def __init__(self, provider: FrameProvider):
+        self.provider = provider
 
     def build(self, images: list[AstroImage], method="median") -> np.ndarray:
         stack = []
 
         for img in images:
-            arr = self.manager.get_image(img)
+            arr = self.provider.get_image(img)
             stack.append(arr)
 
         stack = np.stack(stack, axis=0)

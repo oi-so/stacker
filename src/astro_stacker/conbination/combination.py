@@ -1,18 +1,9 @@
 import numpy as np
-from typing import Iterable, Literal, Protocol
-from ..io.image_data import AstroImage
-from ..io.image_manager import ImageManager
+from typing import Iterable, Literal
+from .provider import FrameProvider
 
 
 Method = Literal["mean", "median", "sigma_clip", "add"]
-
-
-class FrameProvider:
-    def __init__(self, manager: ImageManager):
-        self.manager = manager
-
-    def get_image(self, astro_image: AstroImage) -> np.ndarray:
-        return self.manager.get_image(astro_image)
 
 
 
