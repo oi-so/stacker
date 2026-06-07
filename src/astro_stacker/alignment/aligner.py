@@ -1,3 +1,9 @@
+"""Image alignment by star matching.
+
+Aligns two images by finding and matching stars in both images,
+then computing the transformation (translation, rotation, scale).
+"""
+
 from .matcher import find_transform
 from ..io.image_data import TransformData, AlignmentData
 from ..stars.star_data import StarCatalog
@@ -9,6 +15,15 @@ def align_catalogs(
     reference_catalog: StarCatalog,
     target_catalog: StarCatalog
 ):
+    """Align target image to reference image using star catalogs.
+    
+    Args:
+        reference_catalog: Stars detected in reference image
+        target_catalog: Stars detected in target image
+        
+    Returns:
+        AlignmentResult with transformation and alignment metrics
+    """
     transform, src, dst = find_transform(
         reference_catalog,
         target_catalog

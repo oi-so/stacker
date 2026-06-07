@@ -1,3 +1,8 @@
+"""Standard image format loader (PNG, JPEG, TIFF).
+
+Loads standard image formats using PIL/Pillow.
+"""
+
 from PIL import Image
 import numpy as np
 from pathlib import Path
@@ -7,6 +12,14 @@ from .image_data import AstroImageInfo, AstroImage, ImageShape
 
 
 def load_standard_info(path: Path) -> AstroImage:
+    """Load standard image metadata.
+    
+    Args:
+        path: Path to image file (PNG, JPEG, TIFF, etc.)
+        
+    Returns:
+        AstroImage with metadata
+    """
     with Image.open(path) as img:
         width, height = img.size
         mode = img.mode
@@ -28,7 +41,16 @@ def load_standard_info(path: Path) -> AstroImage:
     
 
 def load_standard_image(path: Path) -> np.ndarray:
+    """Load standard image pixel data.
+    
+    Args:
+        path: Path to image file
+        
+    Returns:
+        Pixel data as RGB numpy array (uint8)
+    """
     with Image.open(path) as img:
-        img = img.convert('RGB')  # Ensure image is in RGB format
+        # Ensure image is in RGB format for consistent handling
+        img = img.convert('RGB')
         data = np.array(img)
         return data

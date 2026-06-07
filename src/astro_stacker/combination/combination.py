@@ -1,3 +1,9 @@
+"""Image combination (stacking) with multiple methods.
+
+Combines multiple aligned images using various statistical methods
+to produce a high signal-to-noise ratio output image.
+"""
+
 import numpy as np
 from typing import Iterable, Literal
 from .provider import FrameProvider
@@ -9,6 +15,14 @@ Method = Literal["mean", "median", "sigma_clip", "add"]
 
 
 class ImageCombiner:
+    """Combine multiple images using a chosen method.
+    
+    Supports:
+    - mean: Simple average
+    - median: Median (robust to outliers)
+    - sigma_clip: Sigma clipping (rejects outliers beyond N*sigma)
+    - add: Sum all images
+    """
     def __init__(self, provider: FrameProvider):
         self.provider = provider
 
@@ -18,6 +32,18 @@ class ImageCombiner:
         images: Iterable[AstroImage], 
         method: Method = "mean"
     ) -> np.ndarray:
+        """Combine images using specified method.
+        
+        Args:
+            images: Iterable of aligned AstroImage objects
+            method: Combination method ("mean", "median", "sigma_clip", "add")
+            
+        Returns:
+            Combined image as numpy array
+            
+        Raises:
+            ValueError: If method is unknown or no images provided
+        """
         if method == "mean":
             return self._mean(images)
         elif method == "add":
@@ -31,6 +57,7 @@ class ImageCombiner:
         
 
     def _mean(self, images: Iterable[AstroImage]) -> np.ndarray:
+        """Compute mean of images. Sensitive to outliers but fast."""
         acc = None
         count = 0
 
@@ -50,6 +77,7 @@ class ImageCombiner:
     
     
     def _add(self, images: Iterable[AstroImage]) -> np.ndarray:
+        """Sum all images. Result may be very bright, use with caution."""
         acc = None
         count = 0
 
@@ -69,6 +97,7 @@ class ImageCombiner:
     
     
     def _median(self, images: Iterable[AstroImage]) -> np.ndarray:
+        """Compute median (robust to outliers). Process in chunks to save memory."""
         chunks = []
         chunk = []
 
@@ -87,6 +116,10 @@ class ImageCombiner:
 
 
     def _sigma_clip(self, images: Iterable[AstroImage], sigma=3.0):
+        """Sigma clipping: reject pixels more than sigma*std from mean.
+        
+        Robust to cosmic rays and outliers, but computationally expensive.
+        """
         stack = []
 
         for img in images:

@@ -1,3 +1,5 @@
+"""FWHM (Full Width at Half Maximum) measurement for stars."""
+
 from scipy.optimize import curve_fit
 import numpy as np
 
@@ -11,6 +13,10 @@ def gaussian_2d(
     sigma,
     offset
 ):
+    """2D Gaussian function for fitting.
+    
+    Parameters are in order: amplitude, center x, center y, sigma, offset.
+    """
     x, y = xy
 
     return (
@@ -32,6 +38,20 @@ def measure_fwhm(
     star,
     box_size: int = 15
 ) -> float | None:
+    """Measure Full Width at Half Maximum for a star.
+    
+    Args:
+        image: Image array containing the star
+        star: Star object with x, y centroid
+        box_size: Size of square cutout around star (default 15x15)
+        
+    Returns:
+        FWHM in pixels, or None if measurement failed
+        
+    Note:
+        Uses 2D Gaussian fitting on a small cutout. Returns None if
+        cutout is too small or fitting fails.
+    """
     x = int(star.x)
     y = int(star.y)
 
@@ -69,6 +89,7 @@ def measure_fwhm(
 
         sigma = abs(popt[3])
 
+        # Convert sigma to FWHM using the formula: FWHM = 2.355 * sigma
         return 2.355 * sigma
 
     except Exception:

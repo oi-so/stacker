@@ -1,3 +1,8 @@
+"""RAW image format loader.
+
+Loads RAW files from digital cameras using rawpy.
+"""
+
 import rawpy
 import numpy as np
 from pathlib import Path
@@ -6,6 +11,14 @@ from .image_data import AstroImageInfo, AstroImage, ImageShape
 
 
 def load_raw_info(path: Path) -> AstroImage:
+    """Load RAW image metadata.
+    
+    Args:
+        path: Path to RAW file
+        
+    Returns:
+        AstroImage with metadata from RAW header and EXIF
+    """
     with rawpy.imread(str(path)) as raw:
         height, width = raw.sizes.height, raw.sizes.width
         channels = raw.raw_colors
@@ -26,6 +39,14 @@ def load_raw_info(path: Path) -> AstroImage:
     
 
 def load_raw_image(path: Path) -> np.ndarray:
+    """Load RAW image pixel data.
+    
+    Args:
+        path: Path to RAW file
+        
+    Returns:
+        Raw image data as float32 numpy array
+    """
     with rawpy.imread(str(path)) as raw:
         data = raw.raw_image.astype(np.float32)
         return data
