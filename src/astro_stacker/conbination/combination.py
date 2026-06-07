@@ -1,6 +1,7 @@
 import numpy as np
 from typing import Iterable, Literal
 from .provider import FrameProvider
+from ..io.image_data import AstroImage
 
 
 Method = Literal["mean", "median", "sigma_clip", "add"]
@@ -12,7 +13,11 @@ class ImageCombiner:
         self.provider = provider
 
     
-    def combine(self, images: Iterable, method: Method = "mean") -> np.ndarray:
+    def combine(
+        self, 
+        images: Iterable[AstroImage], 
+        method: Method = "mean"
+    ) -> np.ndarray:
         if method == "mean":
             return self._mean(images)
         elif method == "add":
@@ -24,7 +29,8 @@ class ImageCombiner:
         else:
             raise ValueError(f"Unknown method: {method}")
         
-    def _mean(self, images: Iterable) -> np.ndarray:
+
+    def _mean(self, images: Iterable[AstroImage]) -> np.ndarray:
         acc = None
         count = 0
 
@@ -43,7 +49,7 @@ class ImageCombiner:
         return acc / count
     
     
-    def _add(self, images: Iterable) -> np.ndarray:
+    def _add(self, images: Iterable[AstroImage]) -> np.ndarray:
         acc = None
         count = 0
 
@@ -62,7 +68,7 @@ class ImageCombiner:
         return acc
     
     
-    def _median(self, images: Iterable) -> np.ndarray:
+    def _median(self, images: Iterable[AstroImage]) -> np.ndarray:
         chunks = []
         chunk = []
 
@@ -80,7 +86,7 @@ class ImageCombiner:
         return np.median(np.stack(chunks), axis=0)
 
 
-    def _sigma_clip(self, images: Iterable, sigma=3.0):
+    def _sigma_clip(self, images: Iterable[AstroImage], sigma=3.0):
         stack = []
 
         for img in images:
