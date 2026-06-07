@@ -18,6 +18,8 @@ class TransformData:
     rotation: float = 0.0
     scale: float = 1.0
 
+    matrix: np.ndarray | None = None
+
 
 @dataclass
 class ScoreData:

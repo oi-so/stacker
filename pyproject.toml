@@ -47,7 +47,8 @@ dependencies = [
 "astroquery>=0.4",
 "tomli-w>=1.2",
 "exifread>=3.5.1",
-"matplotlib>=3.10.9"
+"matplotlib>=3.10.9",
+"astroalign>=2.6.2"
 ]
 
 [project.optional-dependencies]
