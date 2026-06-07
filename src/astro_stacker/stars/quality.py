@@ -13,12 +13,14 @@ class QualityAnalyzer:
         top_catalog = catalog.brightest(use_star_count_max)
         fwhms = np.array([measure_fwhm(image, c) for c in top_catalog])
         fwhms = fwhms[fwhms != None]
-        fwhm_mean = float(np.median(fwhms))
+        median_fwhm = float(np.median(fwhms))
         _, _, background_noise = sigma_clipped_stats(image)
+        score = star_count / (median_fwhm + 1e-6)
 
 
         return ScoreData(
+            score=score,
             star_count=star_count,
-            fwhm=fwhm_mean,
-            background_noise=background_noise
+            fwhm=median_fwhm,
+            background_noise=float(background_noise)
         )
