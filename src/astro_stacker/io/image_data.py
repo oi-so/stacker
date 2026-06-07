@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
 
@@ -42,6 +42,14 @@ class ImageShape:
 
 
 @dataclass
+class AlignmentData:
+    reference_star_count: int | None = None
+    matched_star_count: int | None = None
+    rms_error: float | None = None
+
+
+
+@dataclass
 class AstroImageInfo:
     path: Path
 
@@ -55,11 +63,23 @@ class AstroImageInfo:
 
     exif: dict | None = None
 
-    wcs: WCSData | None = None
+    wcs: WCSData = field(
+        default_factory=WCSData
+    )
 
-    score_data: ScoreData | None = None
+    score_data: ScoreData = field(
+        default_factory=ScoreData
+    )
 
-    transform: TransformData | None = None
+    transform: TransformData = field(
+        default_factory=TransformData
+    )
+
+    alignment_data: AlignmentData = field(
+        default_factory=AlignmentData
+    )
+
+    enabled: bool = True
 
 
 @dataclass
