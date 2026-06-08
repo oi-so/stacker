@@ -70,7 +70,7 @@ class ImageCombiner:
             acc += arr
             count += 1
 
-        if count == 0:
+        if acc is None:
             raise ValueError("No images provided")
 
         return acc / count
@@ -90,31 +90,39 @@ class ImageCombiner:
             acc += arr
             count += 1
 
-        if count == 0:
+        if acc is None:
             raise ValueError("No images provided")
         
         return acc
     
     
-    def _median(self, images: Iterable[AstroImage]) -> np.ndarray:
-        """Compute median (robust to outliers). Process in chunks to save memory."""
-        chunks = []
-        chunk = []
+    # TODO: 軽量化する
+    def _median(
+        self,
+        images: Iterable[AstroImage]
+    ) -> np.ndarray:
+
+        stack = []
 
         for img in images:
-            arr = self.provider.get_image(img).astype(np.float32)
-            chunk.append(arr)
+            stack.append(
+                self.provider.get_image(
+                    img
+                ).astype(np.float32)
+            )
 
-            if len(chunk) == 50:
-                chunks.append(np.median(np.stack(chunk), axis=0))
-                chunk = []
+        if len(stack) == 0:
+            raise ValueError(
+                "No images provided"
+            )
 
-        if chunk:
-            chunks.append(np.median(np.stack(chunk), axis=0))
+        return np.median(
+            np.stack(stack),
+            axis=0
+        )
 
-        return np.median(np.stack(chunks), axis=0)
 
-
+    # TODO:軽量化する
     def _sigma_clip(self, images: Iterable[AstroImage], sigma=3.0):
         """Sigma clipping: reject pixels more than sigma*std from mean.
         
@@ -125,6 +133,9 @@ class ImageCombiner:
         for img in images:
             arr = self.provider.get_image(img).astype(np.float32)
             stack.append(arr)
+
+        if len(stack) == 0: 
+            raise ValueError("No images provided")
 
         stack = np.stack(stack, axis=0)
 
