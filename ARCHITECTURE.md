@@ -45,7 +45,6 @@ src/astro_stacker/
 ├── calibration/             # キャリブレーション処理
 │   └── calibration.py       # Master フレーム適用
 ├── combination/             # 画像合成/スタック
-│   ├── combination.py       # 複数統計方法の実装
 │   └── provider.py          # フレームプロバイダーインターフェース
 ├── core/                    # コア機能（予約）
 ├── drizzle/                 # ドリズル処理
@@ -64,6 +63,7 @@ src/astro_stacker/
 ├── platesolve/              # Plate Solve（天体位置決定）
 ├── quality/                 # 画質評価
 ├── stacking/                # スタック処理
+│   ├── combiner.py       # 複数統計方法の実装
 ├── stars/                   # 星検出・分析
 │   ├── detector.py          # 星検出（photutils）
 │   ├── star_data.py         # 星データクラス
@@ -232,7 +232,7 @@ catalog = detect_stars(image, fwhm=4.0, sigma=5.0)
 
 ### combination（スタック）
 
-#### combination.py - 複数統計方法
+#### combiner.py - 複数統計方法
 - **mean**: シンプル平均（外れ値に弱い）
 - **median**: 中央値（外れ値ロバスト）
 - **sigma_clip**: Sigma クリッピング（宇宙線除去）

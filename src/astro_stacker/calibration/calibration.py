@@ -9,7 +9,7 @@ import numpy as np
 from pathlib import Path
 
 from ..io.image_data import AstroImage
-from ..combination.provider import FrameProvider
+from ..stacking.combiner import FrameProvider
 
 
 @dataclass
