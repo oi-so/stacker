@@ -36,7 +36,9 @@
 ```
 src/astro_stacker/
 ├── __init__.py
-├── app.py                    # エントリーポイント
+├── app.py                   # エントリーポイント
+├── core/                    #
+│   └── provider.py          # フレームプロバイダーインターフェース
 ├── alignment/               # 画像位置合わせ
 │   ├── aligner.py           # 位置合わせ実行エンジン
 │   ├── matcher.py           # 星マッチング
@@ -44,8 +46,6 @@ src/astro_stacker/
 │   └── alignment_data.py    # 結果データ構造
 ├── calibration/             # キャリブレーション処理
 │   └── calibration.py       # Master フレーム適用
-├── combination/             # 画像合成/スタック
-│   └── provider.py          # フレームプロバイダーインターフェース
 ├── core/                    # コア機能（予約）
 ├── drizzle/                 # ドリズル処理
 ├── i18n/                    # 国際化/多言語
