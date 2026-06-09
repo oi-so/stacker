@@ -6,6 +6,7 @@ Defines the interface for accessing image data in the combination pipeline.
 from typing import Protocol, runtime_checkable
 from ..io.image_data import AstroImage
 from ..io.image_manager import ImageManager
+from ..calibration.calibration import Calibrator
 import numpy as np
 
 
@@ -46,3 +47,15 @@ class ImageManagerProvider:
     def get_image(self, astro_image: AstroImage) -> np.ndarray:
         """Get image data using ImageManager."""
         return self.manager.get_image(astro_image)
+    
+
+
+
+class CalibratedFrameProvider:
+    def __init__(self, base_provider: FrameProvider, calibrator: Calibrator):
+        self.base_provider = base_provider
+        self.calibrator = calibrator
+
+    def get_image(self, astro_image: AstroImage) -> np.ndarray:
+        image = self.base_provider.get_image(astro_image)
+        return self.calibrator.calibrate(image)
