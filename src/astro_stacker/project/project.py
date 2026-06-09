@@ -24,13 +24,28 @@ class ProjectResult:
 
 
 
+@dataclass 
+class CalibrationFrames:
+    darks: list[AstroImage] = field(default_factory=list)
+    flats: list[AstroImage] = field(default_factory=list)
+    flat_darks: list[AstroImage] = field(default_factory=list)
+    biases: list[AstroImage] = field(default_factory=list)
+
+
+@dataclass
+class MasterCalibrationFrames:
+    dark: np.ndarray | None = None
+    flat: np.ndarray | None = None
+    flat_dark: np.ndarray | None = None
+    bias: np.ndarray | None = None
+
+
+
 @dataclass
 class Project:
     light_frames: list[AstroImage] = field(default_factory=list)
-    dark_frames: list[AstroImage] = field(default_factory=list)
-    flat_frames: list[AstroImage] = field(default_factory=list)
-    flat_dark_frames: list[AstroImage] = field(default_factory=list)
-    bias_frames: list[AstroImage] = field(default_factory=list)
+    calibration_frames: CalibrationFrames = field(default_factory=CalibrationFrames)
+    master_calibration_frames: MasterCalibrationFrames = field(default_factory=MasterCalibrationFrames)
 
     reference_image: AstroImage | None = None
 
