@@ -19,7 +19,7 @@ class ProjectSettings:
 
 
 @dataclass
-class Result:
+class ProjectResult:
     stacked_image: np.ndarray | None = None
 
 
@@ -38,4 +38,4 @@ class Project:
     output_path: Path | None = None
     project_name: str = "Untitled"
     settings: ProjectSettings = field(default_factory=ProjectSettings)
-    result: Result = field(default_factory=Result)
+    result: ProjectResult = field(default_factory=ProjectResult)
