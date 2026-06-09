@@ -10,25 +10,10 @@ import numpy as np
 from ..io.image_data import AstroImage
 from ..core.provider import FrameProvider
 from ..project.project import Project
+from ..project.settings import CalibrationSettings
 from ..stacking.combiner import Method, ImageCombiner
 
 from collections.abc import Iterable
-
-
-
-
-class CalibrationPipeline:
-    """Configuration for which calibration frames to apply."""
-    
-    def __init__(self, project: Project):
-        """Initialize calibration pipeline."""
-        calibration_settings = project.settings.calibration
-
-        self.use_darks = calibration_settings.use_darks
-        self.use_biases = calibration_settings.use_biases
-        self.use_flats = calibration_settings.use_flats
-        self.use_flat_darks = calibration_settings.use_flat_darks
-
 
 
 class Calibrator:
@@ -41,7 +26,7 @@ class Calibrator:
        - First subtract flat_dark from flat if enabled
     """
     
-    def __init__(self, project: Project, pipeline: CalibrationPipeline):
+    def __init__(self, project: Project, settings: CalibrationSettings):
         """Initialize calibrator.
         
         Args:
@@ -50,7 +35,7 @@ class Calibrator:
         """
         self.project = project
         self.master = project.master_calibration_frames
-        self.pipeline = pipeline
+        self.settings = settings
 
 
     def calibrate(self, image: np.ndarray) -> np.ndarray:
@@ -64,17 +49,17 @@ class Calibrator:
         """
         image = image.astype(np.float32)
 
-        if self.pipeline.use_darks and self.master.dark is not None:
+        if self.settings.use_darks and self.master.dark is not None:
             dark = self.master.dark
             image -= dark
 
-        if self.pipeline.use_biases and self.master.bias is not None:
+        if self.settings.use_biases and self.master.bias is not None:
             bias = self.master.bias
             image -= bias
 
-        if self.pipeline.use_flats and self.master.flat is not None:
+        if self.settings.use_flats and self.master.flat is not None:
             flat = self.master.flat
-            if self.pipeline.use_flat_darks and self.master.flat_dark is not None:
+            if self.settings.use_flat_darks and self.master.flat_dark is not None:
                 flat_dark = self.master.flat_dark
                 flat -= flat_dark
 
