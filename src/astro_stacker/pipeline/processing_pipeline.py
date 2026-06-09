@@ -1,5 +1,6 @@
 from ..io.image_manager import ImageManager
-from ..core.provider import ImageManagerProvider, CalibratedFrameProvider
+from ..core.provider import ImageManagerProvider
+from ..calibration.provider import CalibratedFrameProvider
 from ..project.project import Project
 from ..calibration.calibration import MasterFrameBuilder, Calibrator
 from ..pipeline.alignment_pipeline import AlignmentPipeline

@@ -6,7 +6,6 @@ Defines the interface for accessing image data in the combination pipeline.
 from typing import Protocol, runtime_checkable
 from ..io.image_data import AstroImage
 from ..io.image_manager import ImageManager
-from ..calibration.calibration import Calibrator
 import numpy as np
 
 
