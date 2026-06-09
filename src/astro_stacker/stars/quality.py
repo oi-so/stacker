@@ -34,8 +34,9 @@ class QualityAnalyzer:
         top_catalog = catalog.brightest(use_star_count_max)
         
         # Measure FWHM for brightest stars
-        fwhms = np.array([measure_fwhm(image, c) for c in top_catalog])
-        fwhms = fwhms[fwhms != None]  # Remove None values
+        fwhms = np.array([measure_fwhm(image, c) for c in top_catalog], dtype=object)
+        # Filter out None values
+        fwhms = np.array([f for f in fwhms if f is not None], dtype=np.float32)
         
         median_fwhm = float(np.median(fwhms)) if len(fwhms) > 0 else 0.0
         _, _, background_noise = sigma_clipped_stats(image)

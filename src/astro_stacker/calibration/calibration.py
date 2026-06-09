@@ -58,7 +58,7 @@ class Calibrator:
             image -= bias
 
         if self.settings.use_flats and self.master.flat is not None:
-            flat = self.master.flat
+            flat = self.master.flat.copy()  # Create a copy to avoid modifying the master frame
             if self.settings.use_flat_darks and self.master.flat_dark is not None:
                 flat_dark = self.master.flat_dark
                 flat -= flat_dark

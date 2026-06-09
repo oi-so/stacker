@@ -56,7 +56,7 @@ class ProcessingPipeline:
         alignment_pipeline = AlignmentPipeline(provider)
         alignment_pipeline.run(project, project.settings.alignment)
 
-        if not CalibratedFrameProvider:
+        if not CALIBRATE_BEFORE_ALIGN:
             provider = CalibratedFrameProvider(provider, calibrator)
 
         stacking_pipeline = StackingPipeline(provider)
