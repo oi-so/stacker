@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..io.image_data import AstroImage
-from settings import StackingSettings, AlignmentSettings, CalibrationSettings
+from ..project.settings import StackingSettings, AlignmentSettings, CalibrationSettings
 import numpy as np
 
 
