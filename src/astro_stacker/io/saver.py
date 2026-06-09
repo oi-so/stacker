@@ -8,7 +8,7 @@ def save_tiff(image: np.ndarray, path: Path) -> None:
     tifffile.imwrite(path, image)
 
 
-def save_preview_tiff(image, path):
+def save_preview_tiff(image: np.ndarray, path: Path):
     img = image.astype(np.float32).copy()
 
     img -= img.min()
