@@ -6,42 +6,11 @@ electronic noise and optical effects from light frames.
 
 from dataclasses import dataclass
 import numpy as np
-from pathlib import Path
 
 from ..io.image_data import AstroImage
 from ..core.provider import FrameProvider
 
 
-@dataclass
-class CalibrationFrameSet:
-    """Paths to calibration frame files.
-    
-    Attributes:
-        darks: Paths to dark frames (or None)
-        biases: Paths to bias frames (or None)
-        flats: Paths to flat field frames (or None)
-        flat_darks: Paths to dark frames for flats (or None)
-    """
-    darks: list[Path] | None
-    biases: list[Path] | None
-    flats: list[Path] | None
-    flat_darks: list[Path] | None
-
-
-@dataclass
-class CalibrationMasterFrames:
-    """Master frames for calibration (pre-combined from calibration sets).
-    
-    Attributes:
-        dark: Master dark frame (or None)
-        bias: Master bias frame (or None)
-        flat: Master flat frame (or None)
-        flat_dark: Master dark for flats (or None)
-    """
-    dark: np.ndarray | None
-    bias: np.ndarray | None
-    flat: np.ndarray | None
-    flat_dark: np.ndarray | None
 
 
 class CalibrationPipeline:

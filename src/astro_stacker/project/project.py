@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..io.image_data import AstroImage
-from settings import StackingSettings, AlignmentSettings
+from settings import StackingSettings, AlignmentSettings, CalibrationSettings
 import numpy as np
 
 
@@ -10,11 +10,14 @@ import numpy as np
 
 @dataclass
 class ProjectSettings:
-    light_frame_settings: StackingSettings = field(default_factory=StackingSettings)
-    dark_frame_settings: StackingSettings = field(default_factory=StackingSettings)
-    flat_frame_settings: StackingSettings = field(default_factory=StackingSettings)
-    flat_dark_frame_settings: StackingSettings = field(default_factory=StackingSettings)
-    bias_frame_settings: StackingSettings = field(default_factory=StackingSettings)
+    calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
+    aliment: AlignmentSettings = field(default_factory=AlignmentSettings)
+
+    light_frame: StackingSettings = field(default_factory=StackingSettings)
+    dark_frame: StackingSettings = field(default_factory=StackingSettings)
+    flat_frame: StackingSettings = field(default_factory=StackingSettings)
+    flat_dark_frame: StackingSettings = field(default_factory=StackingSettings)
+    bias_frame: StackingSettings = field(default_factory=StackingSettings)
 
 
 
