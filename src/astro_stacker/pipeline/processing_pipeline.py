@@ -6,6 +6,7 @@ from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.stacking_pipeline import StackingPipeline
 
 
+# TODO:将来的にProject内に入れて切り替えれるようにするかも
 CALIBRATE_BEFORE_ALIGN: bool = True
 
 
