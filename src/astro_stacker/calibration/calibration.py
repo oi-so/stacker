@@ -9,6 +9,10 @@ import numpy as np
 
 from ..io.image_data import AstroImage
 from ..core.provider import FrameProvider
+from ..project.project import Project
+from ..stacking.combiner import Method, ImageCombiner
+
+from collections.abc import Iterable
 
 
 
@@ -16,25 +20,14 @@ from ..core.provider import FrameProvider
 class CalibrationPipeline:
     """Configuration for which calibration frames to apply."""
     
-    def __init__(
-        self,
-        use_darks: bool = False,
-        use_biases: bool = False,
-        use_flats: bool = False,
-        use_flat_darks: bool = False
-    ):
-        """Initialize calibration pipeline.
-        
-        Args:
-            use_darks: Apply dark frame calibration
-            use_biases: Apply bias frame calibration
-            use_flats: Apply flat field calibration
-            use_flat_darks: Apply dark frame subtraction to flats
-        """
-        self.use_darks = use_darks
-        self.use_biases = use_biases
-        self.use_flats = use_flats
-        self.use_flat_darks = use_flat_darks
+    def __init__(self, project: Project):
+        """Initialize calibration pipeline."""
+        calibration_settings = project.settings.calibration
+
+        self.use_darks = calibration_settings.use_darks
+        self.use_biases = calibration_settings.use_biases
+        self.use_flats = calibration_settings.use_flats
+        self.use_flat_darks = calibration_settings.use_flat_darks
 
 
 
@@ -48,15 +41,17 @@ class Calibrator:
        - First subtract flat_dark from flat if enabled
     """
     
-    def __init__(self, master: CalibrationMasterFrames, pipeline: CalibrationPipeline):
+    def __init__(self, project: Project, pipeline: CalibrationPipeline):
         """Initialize calibrator.
         
         Args:
-            master: Pre-computed master calibration frames
+            project: Project class
             pipeline: Configuration for which frames to apply
         """
-        self.master = master
+        self.project = project
+        self.master = project.master_calibration_frames
         self.pipeline = pipeline
+
 
     def calibrate(self, image: np.ndarray) -> np.ndarray:
         """Apply calibration to an image.
@@ -102,35 +97,6 @@ class CalibrationResult:
     applied: list[str]
 
 
-class CalibrationManager:
-    """Manages multiple calibrators."""
-    
-    def __init__(self, calibrators: list[Calibrator] | None = None) -> None:
-        """Initialize manager.
-        
-        Args:
-            calibrators: List of Calibrator objects to manage
-        """
-        self.calibrators = calibrators or []
-
-    def register(self, calibrator: Calibrator) -> None:
-        """Add a calibrator to the list.
-        
-        Args:
-            calibrator: Calibrator object to add
-        """
-        self.calibrators.append(calibrator)
-
-    def apply_all(self, image: np.ndarray) -> CalibrationResult:
-        result_image = image
-        applied: list[str] = []
-
-        for calibrator in self.calibrators:
-            result_image = calibrator.calibrate(result_image)
-            applied.append(type(calibrator).__name__)
-
-        return CalibrationResult(image=result_image, applied=applied)
-
 
 def sigma_clip():
     pass
@@ -139,21 +105,7 @@ def sigma_clip():
 class MasterFrameBuilder:
     def __init__(self, provider: FrameProvider):
         self.provider = provider
+        self.combiner = ImageCombiner(provider)
 
-    def build(self, images: list[AstroImage], method="median") -> np.ndarray:
-        stack = []
-
-        for img in images:
-            arr = self.provider.get_image(img)
-            stack.append(arr)
-
-        stack = np.stack(stack, axis=0)
-
-        if method == "median":
-            return np.median(stack, axis=0)
-        elif method == "mean":
-            return np.mean(stack, axis=0)
-        else:
-            raise ValueError("The method is an invalid value")
-        
-        return stack
+    def build(self, images: Iterable[AstroImage], method: Method = "median") -> np.ndarray:
+        return self.combiner.combine(images, method)
