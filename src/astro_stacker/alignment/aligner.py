@@ -14,7 +14,7 @@ import numpy as np
 def align_catalogs(
     reference_catalog: StarCatalog,
     target_catalog: StarCatalog
-):
+) -> AlignmentResult:
     """Align target image to reference image using star catalogs.
     
     Args:
