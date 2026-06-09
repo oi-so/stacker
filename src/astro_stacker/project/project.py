@@ -3,6 +3,7 @@ from pathlib import Path
 
 from ..io.image_data import AstroImage
 from settings import StackingSettings, AlignmentSettings
+import numpy as np
 
 
 
@@ -14,6 +15,12 @@ class ProjectSettings:
     flat_frame_settings: StackingSettings = field(default_factory=StackingSettings)
     flat_dark_frame_settings: StackingSettings = field(default_factory=StackingSettings)
     bias_frame_settings: StackingSettings = field(default_factory=StackingSettings)
+
+
+
+@dataclass
+class Result:
+    stacked_image: np.ndarray | None = None
 
 
 
@@ -31,3 +38,4 @@ class Project:
     output_path: Path | None = None
     project_name: str = "Untitled"
     settings: ProjectSettings = field(default_factory=ProjectSettings)
+    result: Result = field(default_factory=Result)
