@@ -11,7 +11,7 @@ import numpy as np
 @dataclass
 class ProjectSettings:
     calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
-    aliment: AlignmentSettings = field(default_factory=AlignmentSettings)
+    alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
 
     light_frame: StackingSettings = field(default_factory=StackingSettings)
     dark_frame: StackingSettings = field(default_factory=StackingSettings)
