@@ -4,7 +4,7 @@ __pycache__
 .vscode
 
 # Cache and temporary directories
-cache/
+./cache/
 temp/
 logs/
 output/
