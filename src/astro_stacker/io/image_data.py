@@ -10,13 +10,15 @@ This module defines the core data classes used throughout astro_stacker:
 - AstroImage: Complete image container with lazy loading
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from pathlib import Path
 import numpy as np
 
+from ..utils.serializable import SerializableMixin
+
 
 @dataclass
-class WCSData:
+class WCSData(SerializableMixin):
     """World Coordinate System (WCS) information for an image.
     
     Attributes:
@@ -32,7 +34,7 @@ class WCSData:
 
 
 @dataclass
-class TransformData:
+class TransformData(SerializableMixin):
     """Image alignment transformation parameters.
     
     Stores both individual parameters and the full transformation matrix
@@ -52,9 +54,26 @@ class TransformData:
 
     matrix: np.ndarray | None = None
 
+    def to_dict(self) -> dict:
+        data = asdict(self)
+
+        if self.matrix is not None:
+            data["matrix"] = self.matrix.tolist()
+
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict):
+        matrix = data.get("matrix")
+
+        if matrix is not None:
+            data["matrix"] = np.array(matrix)
+
+        return cls(**data)
+
 
 @dataclass
-class ScoreData:
+class ScoreData(SerializableMixin):
     """Image quality metrics and scoring information.
     
     Attributes:
@@ -77,6 +96,14 @@ class ScoreData:
     cloud_score: float | None = None
 
 
+    def to_dict(self) -> dict:
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScoreData":
+        return cls(**data)
+
+
 @dataclass
 class ImageShape:
     """Image dimensions.
@@ -93,7 +120,7 @@ class ImageShape:
 
 
 @dataclass
-class AlignmentData:
+class AlignmentData(SerializableMixin):
     """Star matching statistics from image alignment.
     
     Attributes:
@@ -108,7 +135,7 @@ class AlignmentData:
 
 
 @dataclass
-class AstroImageInfo:
+class AstroImageInfo(SerializableMixin):
     path: Path
 
     shape: ImageShape
@@ -153,19 +180,3 @@ class AstroImage:
     """
     info: AstroImageInfo
     image: np.ndarray | None
-
-    @property
-    def is_loaded(self) -> bool:
-        """Check if image data is currently loaded in memory."""
-        return self.image is not None
-    
-    def load(self) -> None:
-        """Load image data from disk into memory."""
-        from .loader import load_image
-
-        if self.image is None:
-            self.image = load_image(self)
-
-    def unload(self) -> None:
-        del self.image
-        self.image = None

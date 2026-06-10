@@ -1,7 +1,7 @@
 import json
 from dataclasses import asdict
 
-from ..alignment.transform import TransformData
+from ..io.image_data import TransformData
 from .manager import CacheManager
 
 
