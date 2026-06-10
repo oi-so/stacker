@@ -57,3 +57,4 @@ class Project:
     project_name: str = "Untitled"
     settings: ProjectSettings = field(default_factory=ProjectSettings)
     result: ProjectResult = field(default_factory=ProjectResult)
+    cache_directory: Path | None = None
