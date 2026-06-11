@@ -40,15 +40,14 @@ dependencies = [
 "fitsio>=1.2",
 "pillow>=11.0",
 "psutil>=7.0",
-"pyqt6>=6.8",
-"pyqtgraph>=0.13",
 "pandas>=2.2",
 "scikit-image>=0.25",
 "astroquery>=0.4",
 "tomli-w>=1.2",
 "exifread>=3.5.1",
 "matplotlib>=3.10.9",
-"astroalign>=2.6.2"
+"astroalign>=2.6.2",
+"pyside6>=6.8,<7"
 ]
 
 [project.optional-dependencies]

@@ -1223,7 +1223,7 @@ weighted_result = np.sum([
 **現状**：`ui/` ディレクトリが存在するが未実装
 
 **想定される機能**：
-- PyQt6 ベースの GUI
+- PySide6 ベースの GUI
 - 画像プレビュー
 - パラメータ調整 UI
 - プログレス表示
@@ -1348,7 +1348,7 @@ python tests/test.py
 | `scikit-image` | 画像処理 |
 | `rawpy` | RAW ファイル読み込み |
 | `pillow` | PNG/JPEG/TIFF 読み込み |
-| `pyqt6` | GUI（未実装） |
+| `PySide6` | GUI（未実装） |
 
 ---
 
