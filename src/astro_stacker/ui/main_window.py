@@ -6,6 +6,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QSplitter,
 )
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import QFileDialog
 from PySide6.QtCore import Qt
 from pathlib import Path
 
@@ -15,6 +17,8 @@ from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel
 from .panels.project_tree import ProjectTree
 from .controllers.project_controller import ProjectController
+from .constants import FrameType
+
 
 IMAGE_PATH = f"{str(Path.cwd())}/test_images"
 
@@ -29,6 +33,41 @@ class MainWindow(QMainWindow):
         self.resize(1400, 900)
 
         self._build_ui()
+
+
+    def _on_add_light_frames(self, frame_type: FrameType):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            f"Select {frame_type.display_name} Frames",
+            "",
+            (
+                "Images (*.fits *.fit *.fts "
+                "*.arw *.cr2 *.cr3 *.nef "
+                "*.tif *.tiff)"
+            )
+        )
+
+        if not paths:
+            return
+
+        self.controller.add_files(
+            frame_type,
+            [Path(p) for p in paths],
+        )
+
+    def _create_file_menu(self):
+        file_menu = self.menuBar().addMenu("File")
+
+        for frame_type in FrameType:
+            action = QAction(f"Add {frame_type.display_name}", self)
+            action.triggered.connect(
+                lambda checked=False, ft=frame_type: self._on_add_light_frames(ft)
+            )
+            file_menu.addAction(action)
+
+
+    def _create_menu(self):
+        self._create_file_menu()
 
     def _build_ui(self):
 
@@ -67,8 +106,5 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(main_splitter)
 
-
-        self.controller.add_file("lights", Path(f"{IMAGE_PATH}/lights/DSC03444.ARW"))
-        self.controller.add_file("lights", Path(f"{IMAGE_PATH}/lights/DSC03445.ARW"))
-        self.controller.add_file("lights", Path(f"{IMAGE_PATH}/lights/DSC03446.ARW"))
+        self._create_menu()
 

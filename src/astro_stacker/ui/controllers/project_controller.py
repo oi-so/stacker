@@ -45,3 +45,7 @@ class ProjectController(QObject):
         )
 
         self.project_changed.emit()
+
+    def add_files(self, category: str, paths: list[Path]):
+        for path in paths:
+            self.add_file(category, path)
