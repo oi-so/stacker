@@ -16,6 +16,9 @@ from .panels.log_panel import LogPanel
 from .panels.project_tree import ProjectTree
 from .controllers.project_controller import ProjectController
 
+IMAGE_PATH = f"{str(Path.cwd())}/test_images"
+
+
 
 class MainWindow(QMainWindow):
 
@@ -65,4 +68,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(main_splitter)
 
 
-        # self.controller.add_file("lights", Path())
+        self.controller.add_file("lights", Path(f"{IMAGE_PATH}/lights/DSC03444.ARW"))
+        self.controller.add_file("lights", Path(f"{IMAGE_PATH}/lights/DSC03445.ARW"))
+        self.controller.add_file("lights", Path(f"{IMAGE_PATH}/lights/DSC03446.ARW"))
+
