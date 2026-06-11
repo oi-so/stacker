@@ -58,3 +58,5 @@ class Project:
     settings: ProjectSettings = field(default_factory=ProjectSettings)
     result: ProjectResult = field(default_factory=ProjectResult)
     cache_directory: Path | None = None
+
+    known_paths: set[Path] = set()
