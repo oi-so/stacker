@@ -7,12 +7,14 @@ from PySide6.QtWidgets import (
     QSplitter,
 )
 from PySide6.QtCore import Qt
+from pathlib import Path
 
 from .viewer.image_viewer import ImageViewer
 from .panels.frame_table import FrameTable
 from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel
 from .panels.project_tree import ProjectTree
+from .controllers.project_controller import ProjectController
 
 
 class MainWindow(QMainWindow):
@@ -39,6 +41,9 @@ class MainWindow(QMainWindow):
         self.project_tree = ProjectTree()
         self.viewer = ImageViewer()
         self.info_panel = InfoPanel()
+        self.controller = ProjectController()
+
+        self.controller.category_count_changed.connect(self.project_tree.set_count)
 
         center_splitter.addWidget(self.project_tree)
         center_splitter.addWidget(self.viewer)
@@ -58,3 +63,6 @@ class MainWindow(QMainWindow):
         main_splitter.setStretchFactor(0, 1)
 
         layout.addWidget(main_splitter)
+
+
+        # self.controller.add_file("lights", Path())
