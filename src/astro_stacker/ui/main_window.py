@@ -12,6 +12,7 @@ from .viewer.image_viewer import ImageViewer
 from .panels.frame_table import FrameTable
 from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel
+from .panels.project_tree import ProjectTree
 
 
 class MainWindow(QMainWindow):
@@ -31,15 +32,19 @@ class MainWindow(QMainWindow):
 
         layout = QVBoxLayout(central)
 
-        center_splitter = QSplitter(Qt.Orientation.Horizontal)
+        center_splitter = QSplitter(
+            Qt.Orientation.Horizontal
+        )
 
+        self.project_tree = ProjectTree()
         self.viewer = ImageViewer()
         self.info_panel = InfoPanel()
 
+        center_splitter.addWidget(self.project_tree)
         center_splitter.addWidget(self.viewer)
         center_splitter.addWidget(self.info_panel)
 
-        center_splitter.setStretchFactor(0, 1)
+        center_splitter.setStretchFactor(1, 1)
 
         self.frame_table = FrameTable()
         self.log_panel = LogPanel()
