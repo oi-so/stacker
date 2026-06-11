@@ -59,4 +59,4 @@ class Project:
     result: ProjectResult = field(default_factory=ProjectResult)
     cache_directory: Path | None = None
 
-    known_paths: set[Path] = set()
+    known_paths: set[Path] = field(default_factory=set)

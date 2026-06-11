@@ -37,6 +37,9 @@ class ProjectController(QObject):
 
     def add_file(self, frame_type: FrameType, path: Path) -> None:
         image = load_info(path)
+        if path in self.project.known_paths: return
+
+        self.project.known_paths.add(path)
         frames = self._get_frame_list(frame_type)
         frames.append(image)
 
