@@ -35,7 +35,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
 
 
-    def _on_add_light_frames(self, frame_type: FrameType):
+    def _on_add_frames(self, frame_type: FrameType):
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             f"Select {frame_type.display_name} Frames",
@@ -61,7 +61,7 @@ class MainWindow(QMainWindow):
         for frame_type in FrameType:
             action = QAction(f"Add {frame_type.display_name}", self)
             action.triggered.connect(
-                lambda checked=False, ft=frame_type: self._on_add_light_frames(ft)
+                lambda checked=False, ft=frame_type: self._on_add_frames(ft)
             )
             file_menu.addAction(action)
 
