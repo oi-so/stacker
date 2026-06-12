@@ -65,6 +65,10 @@ class MainWindow(QMainWindow):
             )
             file_menu.addAction(action)
 
+        self.controller.frames_changed.connect(
+            self.frame_table.show_frames
+        )
+
 
     def _create_menu(self):
         self._create_file_menu()
@@ -107,4 +111,11 @@ class MainWindow(QMainWindow):
         layout.addWidget(main_splitter)
 
         self._create_menu()
+        self.project_tree.frame_type_selected.connect(
+            self.controller.set_selected_frames_type
+        )
+
+        self.controller.selected_frame_type_changed.connect(
+            self.frame_table.show_frames
+        )
 

@@ -22,8 +22,9 @@ class ProjectController(QObject):
     }
 
     project_changed = Signal()
-    category_count_changed = Signal(str, int)
-    selected_frame_type_changed = Signal(FrameType)
+    category_count_changed = Signal(object, int)
+    selected_frame_type_changed = Signal(object)
+    frames_changed = Signal(list)
 
     def __init__(self):
         super().__init__()
@@ -53,7 +54,7 @@ class ProjectController(QObject):
 
         self.project_changed.emit()
 
-    def add_files(self, frame_type: FrameType, paths: list[Path]):
+    def add_files(self, frame_type: FrameType, paths: list[Path]) -> None:
         for path in paths:
             self.add_file(frame_type, path)
 
@@ -63,3 +64,10 @@ class ProjectController(QObject):
 
         self.selected_frame_type = frame_type
         self.selected_frame_type_changed.emit(frame_type)
+        frames = self.get_frames(frame_type)
+        self.frames_changed.emit(frames)
+
+
+    def get_frames(self, frame_type: FrameType):
+        return self._get_frame_list(frame_type)
+    
