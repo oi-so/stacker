@@ -13,8 +13,23 @@ This module defines the core data classes used throughout astro_stacker:
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 import numpy as np
+from enum import StrEnum
 
 from ..utils.serializable import SerializableMixin
+
+
+class ColorMode(StrEnum):
+    MONO = "mono"
+    RGB = "rgb"
+    BAYER = "bayer"
+
+
+class CFAType(StrEnum):
+    NONE = "none"
+    RGGB = "rggb"
+    BGGR = "bggr"
+    GBRG = "gbrg"
+    GRBG = "grbg"
 
 
 @dataclass
@@ -141,6 +156,9 @@ class AstroImageInfo(SerializableMixin):
     shape: ImageShape
 
     bit_depth: int
+
+    color_mode: ColorMode
+    cfa_type: CFAType = CFAType.NONE
 
     exposure_time: float | None = None
     iso: int | None = None

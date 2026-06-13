@@ -8,7 +8,7 @@ import numpy as np
 from pathlib import Path
 import exifread
 
-from .image_data import AstroImageInfo, AstroImage, ImageShape
+from .image_data import AstroImageInfo, AstroImage, ImageShape, ColorMode, CFAType
 
 
 def load_standard_info(path: Path) -> AstroImage:
@@ -24,6 +24,13 @@ def load_standard_info(path: Path) -> AstroImage:
         width, height = img.size
         mode = img.mode
         dtype = np.uint8 if mode in ['L', 'RGB'] else np.float32
+
+        bands = len(img.getbands())
+        if bands == 1:
+            color_mode = ColorMode.MONO
+        else:
+            color_mode = ColorMode.RGB
+
         with open(path, 'rb') as f:
             exif_data = exifread.process_file(f)
         return AstroImage(
@@ -31,6 +38,8 @@ def load_standard_info(path: Path) -> AstroImage:
                 path=path,
                 shape=ImageShape(width=width, height=height, channels=len(img.getbands()) if img.getbands() else 1),
                 bit_depth=8 if dtype == np.uint8 else 32,
+                color_mode=color_mode,
+                cfa_type=CFAType.NONE,
                 f_number=exif_data.get('EXIF FNumber').values[0].num / exif_data.get('EXIF FNumber').values[0].den if 'EXIF FNumber' in exif_data else None,
                 exposure_time=exif_data.get('EXIF ExposureTime').values[0].num / exif_data.get('EXIF ExposureTime').values[0].den if 'EXIF ExposureTime' in exif_data else None,
                 iso=exif_data.get('EXIF ISOSpeedRatings').values[0] if 'EXIF ISOSpeedRatings' in exif_data else None,
@@ -51,6 +60,7 @@ def load_standard_image(path: Path) -> np.ndarray:
     """
     with Image.open(path) as img:
         # Ensure image is in RGB format for consistent handling
-        img = img.convert('RGB')
         data = np.array(img)
-        return data
+        if data.ndim == 2:
+            data = data[..., np.newaxis]
+        return data.astype(np.float32)

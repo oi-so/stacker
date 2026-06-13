@@ -12,7 +12,7 @@ from typing import cast
 from astropy.io.fits import PrimaryHDU
 from astropy.wcs import WCS
 
-from .image_data import AstroImageInfo, AstroImage, WCSData, ImageShape
+from .image_data import AstroImageInfo, AstroImage, WCSData, ImageShape, ColorMode, CFAType
 
 
 
@@ -58,6 +58,11 @@ def load_fits_info(path: Path) -> AstroImage:
     except:
         wcs = None
 
+    if channels == 1:
+        color_mode = ColorMode.MONO
+    else:
+        color_mode = ColorMode.RGB
+
     info = AstroImageInfo(
         path=path,
         shape=ImageShape(
@@ -65,6 +70,8 @@ def load_fits_info(path: Path) -> AstroImage:
             height=height,
             channels=channels
         ),
+        color_mode=color_mode,
+        cfa_type=CFAType.NONE,
         bit_depth=bit_depth,
         exposure_time=header.get('EXPTIME'),
         iso=header.get('ISO'),
