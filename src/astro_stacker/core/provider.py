@@ -4,9 +4,10 @@ Defines the interface for accessing image data in the combination pipeline.
 """
 
 from typing import Protocol, runtime_checkable
-from ..io.image_data import AstroImage
+from ..io.image_data import AstroImage, ColorMode, CFAType
 from ..io.image_manager import ImageManager
 import numpy as np
+from ..core.debayer import debayer
 
 
 @runtime_checkable
@@ -47,5 +48,25 @@ class ImageManagerProvider:
         """Get image data using ImageManager."""
         return self.manager.get_image(astro_image)
     
+
+
+
+class DebayerFrameProvider:
+    def __init__(self, base_provider: FrameProvider):
+        self.base_provider = base_provider
+
+    def get_image(self, astro_image: AstroImage) -> np.ndarray:
+        image = self.base_provider.get_image(astro_image)
+
+        if astro_image.info.color_mode == ColorMode.BAYER:
+            image = debayer(
+                image,
+                astro_image.info.cfa_type
+            )
+
+        return image
+
+
+
 
 

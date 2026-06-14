@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from ..stacking.combiner import Method
+from enum import StrEnum
 
 
 
@@ -20,3 +21,9 @@ class CalibrationSettings:
     use_flats: bool = False
     use_flat_darks: bool = False
     use_biases: bool = False
+
+
+
+class DebayerTiming(StrEnum):
+    BEFORE_STACK = "before_stack"
+    AFTER_STACK = "after_stack"

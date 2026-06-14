@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..io.image_data import AstroImage
-from ..project.settings import StackingSettings, AlignmentSettings, CalibrationSettings
+from ..project.settings import StackingSettings, AlignmentSettings, CalibrationSettings, DebayerTiming
 import numpy as np
 
 
@@ -12,6 +12,7 @@ import numpy as np
 class ProjectSettings:
     calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
     alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
+    debayer_timing: DebayerTiming = DebayerTiming.BEFORE_STACK
 
     light_frame: StackingSettings = field(default_factory=StackingSettings)
     dark_frame: StackingSettings = field(default_factory=StackingSettings)

@@ -1,7 +1,8 @@
 from ..io.image_manager import ImageManager
-from ..core.provider import ImageManagerProvider
+from ..core.provider import ImageManagerProvider, DebayerFrameProvider
 from ..calibration.provider import CalibratedFrameProvider
 from ..project.project import Project
+from ..project.settings import DebayerTiming
 from ..calibration.calibration import MasterFrameBuilder, Calibrator
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.stacking_pipeline import StackingPipeline
@@ -59,6 +60,12 @@ class ProcessingPipeline:
         if not CALIBRATE_BEFORE_ALIGN:
             provider = CalibratedFrameProvider(provider, calibrator)
 
-        stacking_pipeline = StackingPipeline(provider)
+        stack_provider = provider
+
+        # TODO:現時点ではスタック後ディベイヤーはスタック処理がディベイヤー前非対応なのでできないため直す
+        if project.settings.debayer_timing == DebayerTiming.BEFORE_STACK:
+            stack_provider = DebayerFrameProvider(stack_provider)
+
+        stacking_pipeline = StackingPipeline(stack_provider)
         stacking_pipeline.run(project, project.settings.light_frame)
 

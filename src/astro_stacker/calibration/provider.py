@@ -1,4 +1,4 @@
-from ..io.image_data import AstroImage
+from ..io.image_data import AstroImage, ColorMode
 from ..calibration.calibration import Calibrator
 from ..core.provider import FrameProvider
 
@@ -13,4 +13,5 @@ class CalibratedFrameProvider:
 
     def get_image(self, astro_image: AstroImage) -> np.ndarray:
         image = self.base_provider.get_image(astro_image)
-        return self.calibrator.calibrate(image)
+        image = self.calibrator.calibrate(image)
+        return image

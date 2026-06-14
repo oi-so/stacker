@@ -1,7 +1,7 @@
-from ..io.image_data import CFAType
+from ..io.image_data import CFAType, ColorMode
 import cv2
 import numpy as np
-
+from dataclasses import dataclass
 
 
 PATTERN = {
