@@ -43,6 +43,7 @@ class MasterCalibrationFrames:
     flat_dark: np.ndarray | None = None
     bias: np.ndarray | None = None
 
+    sub_frame: np.ndarray | None = None
 
 
 @dataclass

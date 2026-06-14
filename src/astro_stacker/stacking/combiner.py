@@ -63,6 +63,7 @@ class ImageCombiner:
 
         for img in images:
             arr = self.provider.get_image(img).astype(np.float32)
+            print(f"max: {arr.max()}, min: {arr.min()}")
 
             if acc is None:
                 acc = np.zeros_like(arr, dtype=np.float32)

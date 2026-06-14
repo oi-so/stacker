@@ -23,7 +23,7 @@ class Calibrator:
     1. Subtract dark frames (removes thermal noise)
     2. Subtract bias frames (removes DC offset)
     3. Divide by flat field (corrects for vignetting, dust, etc.)
-       - First subtract flat_dark from flat if enabled
+        - First subtract flat_dark from flat if enabled
     """
     
     def __init__(self, project: Project, settings: CalibrationSettings):
@@ -49,21 +49,11 @@ class Calibrator:
         """
         image = image.astype(np.float32)
 
-        if self.settings.use_darks and self.master.dark is not None:
-            dark = self.master.dark
-            image -= dark
+        if self.master.sub_frame is not None:
+            image -= self.master.sub_frame
 
-        if self.settings.use_biases and self.master.bias is not None:
-            bias = self.master.bias
-            image -= bias
-
-        if self.settings.use_flats and self.master.flat is not None:
-            flat = self.master.flat.copy()  # Create a copy to avoid modifying the master frame
-            if self.settings.use_flat_darks and self.master.flat_dark is not None:
-                flat_dark = self.master.flat_dark
-                flat -= flat_dark
-
-            # Normalize flat to unit mean and divide
+        if self.master.flat is not None:
+            flat = self.master.flat.copy()
             flat = flat / np.mean(flat)
             image /= flat
 
