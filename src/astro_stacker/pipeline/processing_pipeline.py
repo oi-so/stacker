@@ -1,6 +1,5 @@
 from ..io.image_manager import ImageManager
-from ..core.provider import ImageManagerProvider, DebayerFrameProvider
-from ..calibration.provider import CalibratedFrameProvider
+from ..core.provider import ImageManagerProvider, DebayerFrameProvider, CalibratedFrameProvider
 from ..project.project import Project
 from ..project.settings import DebayerTiming
 from ..calibration.calibration import MasterFrameBuilder, Calibrator
