@@ -46,6 +46,7 @@ class ProcessingPipeline:
         provider = ImageManagerProvider(self.manager)
         builder = MasterFrameBuilder(provider)
 
+        print("Starting making master frames")
         self._build_master_frames(project, builder)
 
         calibrator = Calibrator(project, project.settings.calibration)
@@ -53,6 +54,7 @@ class ProcessingPipeline:
             provider = CalibratedFrameProvider(provider, calibrator)
 
         
+        print("Starting aligning")
         alignment_pipeline = AlignmentPipeline(provider)
         alignment_pipeline.run(project, project.settings.alignment)
 
@@ -65,6 +67,7 @@ class ProcessingPipeline:
         if project.settings.debayer_timing == DebayerTiming.BEFORE_STACK:
             stack_provider = DebayerFrameProvider(stack_provider)
 
+        print("Starting stacking")
         stacking_pipeline = StackingPipeline(stack_provider)
         stacking_pipeline.run(project, project.settings.light_frame)
 

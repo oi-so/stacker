@@ -4,11 +4,15 @@ Defines the interface for accessing image data in the combination pipeline.
 """
 
 from typing import Protocol, runtime_checkable
-from ..io.image_data import AstroImage, ColorMode, CFAType
+from ..io.image_data import AstroImage, ColorMode
 from ..io.image_manager import ImageManager
 import numpy as np
 from ..core.debayer import debayer
-from ..calibration.calibration import Calibrator
+
+
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ..calibration.calibration import Calibrator
 
 
 @runtime_checkable
@@ -71,7 +75,7 @@ class DebayerFrameProvider:
 
 
 class CalibratedFrameProvider:
-    def __init__(self, base_provider: FrameProvider, calibrator: Calibrator):
+    def __init__(self, base_provider: FrameProvider, calibrator: "Calibrator"):
         self.base_provider = base_provider
         self.calibrator = calibrator
 

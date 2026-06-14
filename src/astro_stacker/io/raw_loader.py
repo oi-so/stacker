@@ -25,18 +25,18 @@ def load_raw_info(path: Path) -> AstroImage:
         channels = raw.raw_colors
 
         pattern = raw.raw_pattern
+        if pattern is None: raise ValueError("pattern is None")
+        pattern[pattern == 3] = 1
+        key = tuple(pattern.flatten())
         cfa_type = CFAType.NONE
 
-        if pattern is not None:
-            mapping = {
-                (0, 1, 1, 2): CFAType.RGGB,
-                (2, 1, 1, 0): CFAType.BGGR,
-                (1, 0, 2, 1): CFAType.GRBG,
-                (1, 2, 0, 1): CFAType.GBRG,
-            }
-
-            key = tuple(pattern.flatten())
-            cfa_type = mapping.get(key, CFAType.NONE)
+        mapping = {
+            (0, 1, 1, 2): CFAType.RGGB,
+            (2, 1, 1, 0): CFAType.BGGR,
+            (1, 0, 2, 1): CFAType.GRBG,
+            (1, 2, 0, 1): CFAType.GBRG,
+        }
+        cfa_type = mapping.get(key, CFAType.NONE)
 
         with open(str(path), 'rb') as f:
             exif_data = exifread.process_file(f)

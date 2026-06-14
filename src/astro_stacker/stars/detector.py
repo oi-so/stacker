@@ -9,6 +9,14 @@ from photutils.detection import DAOStarFinder
 from .star_data import Star, StarCatalog
 
 
+def to_luminance(image):
+    if image.ndim == 2:
+        return image
+
+    if image.shape[2] == 1:
+        return image[..., 0]
+
+    return image.mean(axis=2)
 
 
 def detect_stars(image: np.ndarray, fwhm: float = 4.0, sigma: float = 5.0) -> StarCatalog:
@@ -24,7 +32,7 @@ def detect_stars(image: np.ndarray, fwhm: float = 4.0, sigma: float = 5.0) -> St
     sigma: float
         Finding star brightness
     """
-
+    image = to_luminance(image)
     _, median, std = sigma_clipped_stats(image)
 
     finder = DAOStarFinder(
