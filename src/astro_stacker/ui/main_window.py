@@ -34,6 +34,7 @@ from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel, QtLogHandler
 from .panels.project_tree import ProjectTree
 from .viewer.image_viewer import ImageViewer
+from ..core.debayer import debayer
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,15 @@ class MainWindow(QMainWindow):
 
     def _preview_frame(self, image):
         try:
-            self.viewer.set_image(self.manager.get_image(image))
+            nd_img = self.manager.get_image(image)
+            nd_img = (
+                nd_img[0::2, 0::2]
+                + nd_img[0::2, 1::2]
+                + nd_img[1::2, 0::2]
+                + nd_img[1::2, 1::2]
+            ) / 4
+            nd_img = debayer(nd_img, image.info.cfa_type)
+            self.viewer.set_image(nd_img)
         except Exception as exc:
             ErrorDialog.show_exception(self, "画像表示エラー", exc)
 

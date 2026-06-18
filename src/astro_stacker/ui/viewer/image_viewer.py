@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QImage, QPixmap, QPainter
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 import numpy as np
 
@@ -11,6 +11,8 @@ class ImageViewer(QGraphicsView):
         self.setScene(self.scene)
         self.setBackgroundBrush(Qt.GlobalColor.black)
         self._pixmap_item: QGraphicsPixmapItem | None = None
+        self.setRenderHint(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        self._pixmap_item = None
 
     def set_image(self, image: np.ndarray | None) -> None:
         self.scene.clear()
@@ -33,8 +35,14 @@ class ImageViewer(QGraphicsView):
         if finite.size == 0:
             arr = np.zeros_like(arr, dtype=np.float32)
         else:
-            low, high = np.percentile(finite, (1, 99.5))
-            arr = np.clip((arr - low) / (high - low + 1e-8), 0, 1)
+            bg = np.median(finite)
+            sigma = np.std(finite)
+            stretch = 5
+            arr = np.clip(arr - bg + 3 * sigma, 0, None)
+            arr = np.arcsinh(arr / (stretch * sigma))
+            arr /= arr.max() + 1e-8
+            # arr = arr ** (1 / 2.2)
+            arr = np.power(arr, 0.7)
         arr8 = (arr * 255).round().astype(np.uint8)
         if arr8.ndim == 2:
             h, w = arr8.shape
