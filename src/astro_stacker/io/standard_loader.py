@@ -23,7 +23,9 @@ def load_standard_info(path: Path) -> AstroImage:
     with Image.open(path) as img:
         width, height = img.size
         mode = img.mode
-        dtype = np.uint8 if mode in ['L', 'RGB'] else np.float32
+        bit_depth = 16 if mode in {"I;16", "I;16B", "I;16L"} else 8
+        if mode in {"I", "F"}:
+            bit_depth = 32
 
         bands = len(img.getbands())
         if bands == 1:
@@ -37,7 +39,7 @@ def load_standard_info(path: Path) -> AstroImage:
             info=AstroImageInfo(
                 path=path,
                 shape=ImageShape(width=width, height=height, channels=len(img.getbands()) if img.getbands() else 1),
-                bit_depth=8 if dtype == np.uint8 else 32,
+                bit_depth=bit_depth,
                 color_mode=color_mode,
                 cfa_type=CFAType.NONE,
                 f_number=exif_data.get('EXIF FNumber').values[0].num / exif_data.get('EXIF FNumber').values[0].den if 'EXIF FNumber' in exif_data else None,
@@ -61,6 +63,12 @@ def load_standard_image(path: Path) -> np.ndarray:
     with Image.open(path) as img:
         # Ensure image is in RGB format for consistent handling
         data = np.array(img)
+        original_dtype = data.dtype
         if data.ndim == 2:
             data = data[..., np.newaxis]
-        return data.astype(np.float32)
+        data = data.astype(np.float32)
+        if original_dtype == np.uint8:
+            # Use a 16-bit working range for 8-bit standard images so preview
+            # and calibration math operate on the same nominal range.
+            data *= 257.0
+        return np.clip(data, 0, None)

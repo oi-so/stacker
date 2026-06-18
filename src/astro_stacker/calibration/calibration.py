@@ -5,6 +5,7 @@ electronic noise and optical effects from light frames.
 """
 
 from dataclasses import dataclass
+import logging
 import numpy as np
 
 from ..io.image_data import AstroImage
@@ -14,6 +15,8 @@ from ..project.settings import CalibrationSettings
 from ..stacking.combiner import Method, ImageCombiner
 
 from collections.abc import Iterable
+
+logger = logging.getLogger(__name__)
 
 
 class Calibrator:
@@ -47,17 +50,25 @@ class Calibrator:
         Returns:
             Calibrated image as float32
         """
-        image = image.astype(np.float32)
+        calibrated = image.astype(np.float32, copy=True)
 
         if self.master.sub_frame is not None:
-            image -= self.master.sub_frame
+            calibrated = calibrated - self.master.sub_frame.astype(np.float32, copy=False)
 
         if self.master.flat is not None:
-            flat = self.master.flat.copy()
-            flat = flat / np.mean(flat)
-            image /= flat
+            flat = self.master.flat.astype(np.float32, copy=True)
+            if self.master.flat_dark is not None and not self.settings.use_flat_darks:
+                logger.debug("Flat-dark master exists but use_flat_darks is disabled")
 
-        return image
+            mean = float(np.mean(flat))
+            if not np.isfinite(mean) or abs(mean) < 1e-8:
+                logger.warning("Skipping flat calibration because the flat mean is zero")
+            else:
+                flat = flat / mean
+                flat = np.where(np.abs(flat) < 1e-8, 1.0, flat)
+                calibrated = calibrated / flat
+
+        return np.clip(calibrated, 0, None).astype(np.float32, copy=False)
     
 
 @dataclass
@@ -74,7 +85,7 @@ class CalibrationResult:
 
 
 def sigma_clip():
-    pass
+    raise NotImplementedError("未実装: calibration.sigma_clip は ImageCombiner 側へ統合予定です")
 
 
 class MasterFrameBuilder:
@@ -83,4 +94,4 @@ class MasterFrameBuilder:
         self.combiner = ImageCombiner(provider)
 
     def build(self, images: Iterable[AstroImage], method: Method = "median") -> np.ndarray:
-        return self.combiner.combine(images, method)
+        return self.combiner.combine(images, method).astype(np.float32, copy=False)

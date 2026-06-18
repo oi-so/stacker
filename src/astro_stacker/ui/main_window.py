@@ -1,121 +1,299 @@
-# main_window.py
+from __future__ import annotations
 
-from PySide6.QtWidgets import (
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QSplitter,
-)
-from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QFileDialog
-from PySide6.QtCore import Qt
+import logging
 from pathlib import Path
 
-from .viewer.image_viewer import ImageViewer
+from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal, Slot
+from PySide6.QtGui import QAction
+from PySide6.QtWidgets import (
+    QFileDialog,
+    QMainWindow,
+    QProgressBar,
+    QSplitter,
+    QToolBar,
+    QWidget,
+    QVBoxLayout,
+)
+
+from ..core.provider import ImageManagerProvider
+from ..io.image_manager import ImageManager
+from ..io.saver import save_image
+from ..pipeline.alignment_pipeline import AlignmentPipeline
+from ..pipeline.processing_pipeline import ProcessingPipeline
+from .constants import FrameType
+from .controllers.project_controller import ProjectController
+from .dialogs import (
+    AlignmentSettingsDialog,
+    ErrorDialog,
+    SaveDialog,
+    StackingSettingsDialog,
+    show_language_restart,
+)
 from .panels.frame_table import FrameTable
 from .panels.info_panel import InfoPanel
-from .panels.log_panel import LogPanel
+from .panels.log_panel import LogPanel, QtLogHandler
 from .panels.project_tree import ProjectTree
-from .controllers.project_controller import ProjectController
-from .constants import FrameType
+from .viewer.image_viewer import ImageViewer
+
+logger = logging.getLogger(__name__)
 
 
-IMAGE_PATH = f"{str(Path.cwd())}/test_images"
+class PipelineWorker(QObject):
+    finished = Signal()
+    failed = Signal(object)
 
+    def __init__(self, func):
+        super().__init__()
+        self.func = func
+
+    @Slot()
+    def run(self):
+        try:
+            self.func()
+        except Exception as exc:
+            self.failed.emit(exc)
+        finally:
+            self.finished.emit()
 
 
 class MainWindow(QMainWindow):
-
     def __init__(self):
         super().__init__()
+        self.settings = QSettings("AstroStacker", "AstroStacker")
+        self.manager = ImageManager(max_loaded_image_count=10)
+        self.controller = ProjectController()
+        self._thread: QThread | None = None
+        self._worker: PipelineWorker | None = None
+        self._aligned = False
+        self._stacked = False
 
         self.setWindowTitle("Astro Stacker")
         self.resize(1400, 900)
-
         self._build_ui()
-
-
-    def _on_add_frames(self, frame_type: FrameType):
-        paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            f"Select {frame_type.display_name} Frames",
-            "",
-            (
-                "Images (*.fits *.fit *.fts "
-                "*.arw *.cr2 *.cr3 *.nef "
-                "*.tif *.tiff)"
-            )
-        )
-
-        if not paths:
-            return
-
-        self.controller.add_files(
-            frame_type,
-            [Path(p) for p in paths],
-        )
-
-    def _create_file_menu(self):
-        file_menu = self.menuBar().addMenu("File")
-
-        for frame_type in FrameType:
-            action = QAction(f"Add {frame_type.display_name}", self)
-            action.triggered.connect(
-                lambda checked=False, ft=frame_type: self._on_add_frames(ft)
-            )
-            file_menu.addAction(action)
-
-        self.controller.frames_changed.connect(
-            self.frame_table.show_frames
-        )
-
-
-    def _create_menu(self):
-        self._create_file_menu()
+        self._restore_window()
+        self._install_logging()
 
     def _build_ui(self):
-
         central = QWidget()
         self.setCentralWidget(central)
-
         layout = QVBoxLayout(central)
-
-        center_splitter = QSplitter(
-            Qt.Orientation.Horizontal
-        )
 
         self.project_tree = ProjectTree()
         self.viewer = ImageViewer()
         self.info_panel = InfoPanel()
-        self.controller = ProjectController()
+        self.frame_table = FrameTable()
+        self.log_panel = LogPanel()
+        self.progress = QProgressBar()
+        self.progress.setVisible(False)
 
-        self.controller.category_count_changed.connect(self.project_tree.set_count)
-
+        center_splitter = QSplitter(Qt.Orientation.Horizontal)
         center_splitter.addWidget(self.project_tree)
         center_splitter.addWidget(self.viewer)
         center_splitter.addWidget(self.info_panel)
-
         center_splitter.setStretchFactor(1, 1)
 
-        self.frame_table = FrameTable()
-        self.log_panel = LogPanel()
-
         main_splitter = QSplitter(Qt.Orientation.Vertical)
-
         main_splitter.addWidget(center_splitter)
         main_splitter.addWidget(self.frame_table)
         main_splitter.addWidget(self.log_panel)
-
         main_splitter.setStretchFactor(0, 1)
-
         layout.addWidget(main_splitter)
+        layout.addWidget(self.progress)
 
+        self._create_toolbar()
         self._create_menu()
-        self.project_tree.frame_type_selected.connect(
-            self.controller.set_selected_frames_type
-        )
+        self._connect_signals()
+        self._refresh_tables()
+        self._update_actions()
 
-        self.controller.selected_frame_type_changed.connect(
-            self.frame_table.show_frames
-        )
+    def _create_toolbar(self):
+        toolbar = QToolBar("Main")
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.addToolBar(toolbar)
 
+        self.add_action = QAction("📂\nフレーム追加", self)
+        self.align_action = QAction("▶\n位置合わせ", self)
+        self.stack_action = QAction("⚙\nスタック", self)
+        self.save_action = QAction("💾\n保存", self)
+        self.platesolve_action = QAction("🔭\nPlate Solve\n(将来実装)", self)
+        self.reset_action = QAction("❌\nリセット", self)
+        self.platesolve_action.setEnabled(False)
+
+        for action in (
+            self.add_action,
+            self.align_action,
+            self.stack_action,
+            self.save_action,
+            self.platesolve_action,
+            self.reset_action,
+        ):
+            toolbar.addAction(action)
+
+        self.add_action.triggered.connect(
+            lambda: self._on_add_frames(self.frame_table.current_frame_type())
+        )
+        self.align_action.triggered.connect(self._run_alignment)
+        self.stack_action.triggered.connect(self._run_stacking)
+        self.save_action.triggered.connect(self._save_result)
+        self.reset_action.triggered.connect(self._reset_project)
+
+    def _create_menu(self):
+        file_menu = self.menuBar().addMenu("ファイル")
+        for frame_type in FrameType:
+            action = QAction(f"{frame_type.ja_name}を追加", self)
+            action.triggered.connect(lambda checked=False, ft=frame_type: self._on_add_frames(ft))
+            file_menu.addAction(action)
+
+        settings_menu = self.menuBar().addMenu("設定")
+        language_menu = settings_menu.addMenu("言語 / Language")
+        japanese = QAction("日本語", self)
+        english = QAction("English", self)
+        japanese.triggered.connect(lambda: self._set_language("ja"))
+        english.triggered.connect(lambda: self._set_language("en"))
+        language_menu.addAction(japanese)
+        language_menu.addAction(english)
+
+    def _connect_signals(self):
+        self.controller.category_count_changed.connect(self.project_tree.set_count)
+        self.controller.all_frames_changed.connect(lambda _: self._refresh_tables())
+        self.project_tree.frame_type_selected.connect(lambda ft: self.frame_table.tabs.setCurrentIndex(list(FrameType).index(ft)))
+        self.frame_table.files_dropped.connect(self.controller.add_files)
+        self.frame_table.frame_selected.connect(self._preview_frame)
+        self.frame_table.enabled_changed.connect(lambda *_: self._update_actions())
+
+    def _install_logging(self):
+        handler = QtLogHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+        handler.emitter.message.connect(self.log_panel.append_log)
+        root = logging.getLogger()
+        root.setLevel(logging.INFO)
+        root.addHandler(handler)
+        self._qt_log_handler = handler
+
+    def _on_add_frames(self, frame_type: FrameType):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            f"{frame_type.ja_name}を追加",
+            "",
+            "Images (*.fits *.fit *.fts *.arw *.cr2 *.cr3 *.nef *.raf *.png *.jpg *.jpeg *.tif *.tiff)",
+        )
+        if paths:
+            self.controller.add_files(frame_type, [Path(path) for path in paths])
+            self._update_actions()
+
+    def _refresh_tables(self):
+        self.frame_table.set_frames(self.controller.frame_map())
+
+    def _preview_frame(self, image):
+        try:
+            self.viewer.set_image(self.manager.get_image(image))
+        except Exception as exc:
+            ErrorDialog.show_exception(self, "画像表示エラー", exc)
+
+    def _run_alignment(self):
+        if AlignmentSettingsDialog(self.controller.project, self).exec() != AlignmentSettingsDialog.DialogCode.Accepted:
+            return
+
+        def work():
+            provider = ImageManagerProvider(self.manager)
+            AlignmentPipeline(provider).run(self.controller.project, self.controller.project.settings.alignment)
+
+        self._run_worker(work, on_success=self._alignment_finished)
+
+    def _run_stacking(self):
+        if StackingSettingsDialog(self.controller.project, self).exec() != StackingSettingsDialog.DialogCode.Accepted:
+            return
+
+        def work():
+            ProcessingPipeline(self.manager).run(self.controller.project)
+
+        self._run_worker(work, on_success=self._stacking_finished)
+
+    def _run_worker(self, func, on_success):
+        self.progress.setRange(0, 0)
+        self.progress.setVisible(True)
+        self._set_busy(True)
+        thread = QThread(self)
+        worker = PipelineWorker(func)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.failed.connect(lambda exc: ErrorDialog.show_exception(self, "処理エラー", exc))
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(lambda: self._worker_done(on_success))
+        self._thread = thread
+        self._worker = worker
+        thread.start()
+
+    def _worker_done(self, on_success):
+        self.progress.setVisible(False)
+        self._set_busy(False)
+        on_success()
+        self._refresh_tables()
+        self._update_actions()
+        self._thread = None
+        self._worker = None
+
+    def _alignment_finished(self):
+        self._aligned = True
+        logger.info("位置合わせが完了しました")
+
+    def _stacking_finished(self):
+        self._aligned = True
+        self._stacked = self.controller.project.result.stacked_image is not None
+        if self._stacked:
+            self.viewer.set_image(self.controller.project.result.stacked_image)
+        logger.info("スタックが完了しました")
+
+    def _save_result(self):
+        result = self.controller.project.result.stacked_image
+        if result is None:
+            return
+        folder = self.controller.project.output_path.parent if self.controller.project.output_path else Path.cwd()
+        dialog = SaveDialog(folder, self)
+        if dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        path, kwargs = dialog.selected()
+        try:
+            save_image(result, path, **kwargs)
+            logger.info("保存しました: %s", path)
+        except Exception as exc:
+            ErrorDialog.show_exception(self, "保存エラー", exc)
+
+    def _reset_project(self):
+        self.controller.reset()
+        self.manager.unload_all()
+        self.viewer.set_image(None)
+        self._aligned = False
+        self._stacked = False
+        self._update_actions()
+
+    def _set_busy(self, busy: bool):
+        for action in (self.add_action, self.align_action, self.stack_action, self.save_action, self.reset_action):
+            action.setEnabled(not busy)
+
+    def _update_actions(self):
+        has_lights = bool(self.controller.project.light_frames)
+        self.align_action.setEnabled(has_lights)
+        self.stack_action.setEnabled(has_lights)
+        self.save_action.setEnabled(self.controller.project.result.stacked_image is not None)
+        self.add_action.setEnabled(True)
+        self.reset_action.setEnabled(True)
+
+    def _set_language(self, language: str):
+        self.settings.setValue("ui/language", language)
+        show_language_restart(self)
+
+    def _restore_window(self):
+        geometry = self.settings.value("window/geometry")
+        state = self.settings.value("window/state")
+        if geometry:
+            self.restoreGeometry(geometry)
+        if state:
+            self.restoreState(state)
+
+    def closeEvent(self, event):
+        self.settings.setValue("window/geometry", self.saveGeometry())
+        self.settings.setValue("window/state", self.saveState())
+        super().closeEvent(event)

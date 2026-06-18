@@ -4,7 +4,7 @@ from PySide6.QtCore import QObject, Signal
 
 from ...project.project import Project
 from ...io.loader import load_info
-from ..constants import FrameType
+from ..constants import FrameType, MASTER_TO_FRAME_TYPE
 
 
 
@@ -25,6 +25,7 @@ class ProjectController(QObject):
     category_count_changed = Signal(object, int)
     selected_frame_type_changed = Signal(object)
     frames_changed = Signal(list)
+    all_frames_changed = Signal(object)
 
     def __init__(self):
         super().__init__()
@@ -40,8 +41,10 @@ class ProjectController(QObject):
         return len(self._get_frame_list(frame_type))
 
     def add_file(self, frame_type: FrameType, path: Path) -> None:
-        image = load_info(path)
         if path in self.project.known_paths: return
+        image = load_info(path)
+        if image.info.master_type in MASTER_TO_FRAME_TYPE:
+            frame_type = MASTER_TO_FRAME_TYPE[image.info.master_type]
 
         self.project.known_paths.add(path)
         frames = self._get_frame_list(frame_type)
@@ -53,10 +56,13 @@ class ProjectController(QObject):
         )
 
         self.project_changed.emit()
+        self.frames_changed.emit(frames)
+        self.all_frames_changed.emit(self.frame_map())
 
     def add_files(self, frame_type: FrameType, paths: list[Path]) -> None:
         for path in paths:
             self.add_file(frame_type, path)
+        self.all_frames_changed.emit(self.frame_map())
 
     
     def set_selected_frames_type(self, frame_type: FrameType) -> None:
@@ -70,4 +76,14 @@ class ProjectController(QObject):
 
     def get_frames(self, frame_type: FrameType):
         return self._get_frame_list(frame_type)
+
+    def frame_map(self) -> dict[FrameType, list]:
+        return {frame_type: self.get_frames(frame_type) for frame_type in FrameType}
+
+    def reset(self) -> None:
+        self.project = Project()
+        self.project_changed.emit()
+        self.all_frames_changed.emit(self.frame_map())
+        for frame_type in FrameType:
+            self.category_count_changed.emit(frame_type, 0)
     

@@ -36,6 +36,9 @@ def find_transform(
         for s in target.stars
     ])
 
+    if len(ref_points) < 3 or len(tgt_points) < 3:
+        raise ValueError("At least three stars are required for alignment")
+
     # Use astroalign to find matching stars and compute transformation
     transform, (src, dst) = aa.find_transform(
         tgt_points,

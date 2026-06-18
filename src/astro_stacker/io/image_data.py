@@ -183,6 +183,8 @@ class AstroImageInfo(SerializableMixin):
     )
 
     enabled: bool = True
+    is_master: bool = False
+    master_type: str | None = None
 
 
 @dataclass
@@ -198,3 +200,17 @@ class AstroImage:
     """
     info: AstroImageInfo
     image: np.ndarray | None
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.image is not None
+
+    def load(self) -> np.ndarray:
+        from .loader import load_image
+
+        if self.image is None:
+            self.image = load_image(self)
+        return self.image
+
+    def unload(self) -> None:
+        self.image = None

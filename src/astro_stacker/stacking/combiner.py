@@ -6,11 +6,13 @@ to produce a high signal-to-noise ratio output image.
 
 import numpy as np
 from typing import Iterable, Literal
+import logging
 from ..core.provider import FrameProvider
 from ..io.image_data import AstroImage
 
 
 Method = Literal["mean", "median", "sigma_clip", "add"]
+logger = logging.getLogger(__name__)
 
 
 
@@ -44,14 +46,16 @@ class ImageCombiner:
         Raises:
             ValueError: If method is unknown or no images provided
         """
+        enabled_images = [image for image in images if image.info.enabled]
+        logger.info("Combining %d frames with method=%s", len(enabled_images), method)
         if method == "mean":
-            return self._mean(images)
+            return self._mean(enabled_images)
         elif method == "add":
-            return self._add(images)
+            return self._add(enabled_images)
         elif method == "median":
-            return self._median(images)
+            return self._median(enabled_images)
         elif method == "sigma_clip":
-            return self._sigma_clip(images)
+            return self._sigma_clip(enabled_images)
         else:
             raise ValueError(f"Unknown method: {method}")
         
@@ -63,7 +67,6 @@ class ImageCombiner:
 
         for img in images:
             arr = self.provider.get_image(img).astype(np.float32)
-            print(f"max: {arr.max()}, min: {arr.min()}")
 
             if acc is None:
                 acc = np.zeros_like(arr, dtype=np.float32)
@@ -97,7 +100,7 @@ class ImageCombiner:
         return acc
     
     
-    # TODO: 軽量化する
+    # Future: process large datasets in tiles to reduce memory use.
     def _median(
         self,
         images: Iterable[AstroImage]
@@ -123,7 +126,7 @@ class ImageCombiner:
         )
 
 
-    # TODO:軽量化する
+    # Future: process large datasets in tiles to reduce memory use.
     def _sigma_clip(self, images: Iterable[AstroImage], sigma=3.0):
         """Sigma clipping: reject pixels more than sigma*std from mean.
         

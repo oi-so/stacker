@@ -6,6 +6,7 @@ Provides both metadata loading (fast) and pixel data loading (memory-intensive).
 
 from pathlib import Path
 import numpy as np
+import logging
 
 from .image_data import AstroImage
 from .fits_loader import load_fits_image, load_fits_info
@@ -26,6 +27,8 @@ LOADERS = {
     'fits': (FITS_EXTENSIONS, load_fits_info, load_fits_image),
 }
 
+logger = logging.getLogger(__name__)
+
 
 def load_info(path: Path) -> AstroImage:
     """Load image metadata without loading pixel data.
@@ -40,10 +43,13 @@ def load_info(path: Path) -> AstroImage:
         Tries RAW and FITS loaders first, then falls back to standard loader
         (PNG, JPEG, TIFF, etc.)
     """
+    path = Path(path)
     ext = path.suffix.lower()
     for loader_name, (extensions, info_loader, image_loader) in LOADERS.items():
         if ext in extensions:
+            logger.debug("Loading %s metadata with %s loader", path, loader_name)
             return info_loader(path)
+    logger.debug("Loading %s metadata with standard loader", path)
     return load_standard_info(path)
 
 
@@ -60,5 +66,10 @@ def load_image(astro_image: AstroImage) -> np.ndarray:
     ext = path.suffix.lower()
     for loader_name, (extensions, info_loader, image_loader) in LOADERS.items():
         if ext in extensions:
-            return image_loader(path)
-    return load_standard_image(path)
+            image = image_loader(path)
+            break
+    else:
+        image = load_standard_image(path)
+
+    image = np.asarray(image, dtype=np.float32)
+    return np.clip(image, 0, None)

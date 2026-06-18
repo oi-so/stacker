@@ -1,6 +1,5 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
-from enum import StrEnum
 from ..constants import FrameType
 
 class ProjectTree(QTreeWidget):
@@ -23,7 +22,7 @@ class ProjectTree(QTreeWidget):
         self.addTopLevelItem(root)
 
         for frame_type in FrameType:
-            item = QTreeWidgetItem([f"{frame_type.display_name} (0)"])
+            item = QTreeWidgetItem([f"{frame_type.ja_name} (0)"])
 
             root.addChild(item)
 
@@ -37,7 +36,7 @@ class ProjectTree(QTreeWidget):
 
         item.setText(
             0,
-            f"{category.display_name} ({count})"
+            f"{category.ja_name} ({count})"
         )
 
     def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:

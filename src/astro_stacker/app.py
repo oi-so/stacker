@@ -1,16 +1,17 @@
 from PySide6.QtWidgets import QApplication
+import sys
 
 from astro_stacker.ui.main_window import MainWindow
 
 
 def main():
-    app = QApplication([])
+    app = QApplication(sys.argv)
 
     window = MainWindow()
     window.show()
 
-    app.exec()
+    return app.exec()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

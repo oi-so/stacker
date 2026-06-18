@@ -10,6 +10,15 @@ import exifread
 from .image_data import AstroImageInfo, AstroImage, ImageShape
 from .image_data import ColorMode, CFAType
 
+RAW_POSTPROCESS_KWARGS = {
+    "no_auto_bright": True,
+    "bright": 1.0,
+    "use_camera_wb": False,
+    "use_auto_wb": False,
+    "output_bps": 16,
+    "gamma": (1, 1),
+}
+
 
 def load_raw_info(path: Path) -> AstroImage:
     """Load RAW image metadata.
@@ -25,7 +34,9 @@ def load_raw_info(path: Path) -> AstroImage:
         channels = raw.raw_colors
 
         pattern = raw.raw_pattern
-        if pattern is None: raise ValueError("pattern is None")
+        if pattern is None:
+            raise ValueError("pattern is None")
+        pattern = pattern.copy()
         pattern[pattern == 3] = 1
         key = tuple(pattern.flatten())
         cfa_type = CFAType.NONE
@@ -49,7 +60,7 @@ def load_raw_info(path: Path) -> AstroImage:
                 bit_depth=raw.raw_image.dtype.itemsize * 8,
                 f_number=exif_data.get('EXIF FNumber').values[0].num / exif_data.get('EXIF FNumber').values[0].den if 'EXIF FNumber' in exif_data else None,
                 exposure_time=exif_data.get('EXIF ExposureTime').values[0].num / exif_data.get('EXIF ExposureTime').values[0].den if 'EXIF ExposureTime' in exif_data else None,
-                iso=exif_data.get('EXIF ISOSpeedRatings').values[0] if 'EXIF ISOSpeedRatings' in exif_data else None,
+                iso=int(exif_data.get('EXIF ISOSpeedRatings').values[0]) if 'EXIF ISOSpeedRatings' in exif_data else None,
                 exif={tag: str(value) for tag, value in exif_data.items()}
             ),
             image=None
@@ -66,8 +77,27 @@ def load_raw_image(path: Path) -> np.ndarray:
         Raw image data as float32 numpy array
     """
     with rawpy.imread(str(path)) as raw:
-        data = raw.raw_image.astype(np.float32)
+        # Keep RAW frames as the camera's linear Bayer plane. This is the
+        # safest policy for dark/bias/flat calibration because no per-frame
+        # auto-brightening, white balance, or gamma is introduced.
+        data = raw.raw_image_visible.astype(np.float32, copy=True)
 
         if data.ndim == 2:
             data = data[..., np.newaxis]
-        return data
+        return np.clip(data, 0, None)
+
+
+def load_raw_rgb_image(path: Path) -> np.ndarray:
+    """Load demosaiced linear RGB data with deterministic rawpy settings."""
+    with rawpy.imread(str(path)) as raw:
+        try:
+            import rawpy as _rawpy
+
+            kwargs = {
+                **RAW_POSTPROCESS_KWARGS,
+                "demosaic_algorithm": _rawpy.DemosaicAlgorithm.AHD,
+            }
+        except Exception:
+            kwargs = RAW_POSTPROCESS_KWARGS
+        data = raw.postprocess(**kwargs)
+    return np.clip(data.astype(np.float32), 0, None)

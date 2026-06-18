@@ -7,12 +7,17 @@ from enum import StrEnum
 @dataclass
 class StackingSettings:
     method: Method = "mean"
+    sigma: float = 3.0
+    iterations: int = 1
 
 
 
 @dataclass
 class AlignmentSettings:
     max_stars: int = 500
+    sigma: float = 5.0
+    reference_mode: str = "middle"
+    calibrate_before_align: bool = True
 
 
 @dataclass

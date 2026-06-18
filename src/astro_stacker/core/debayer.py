@@ -28,8 +28,10 @@ def neutralize_background(rgb: np.ndarray):
 def debayer(image: np.ndarray, cfa_type: CFAType,
             black_level: float = 0.0,
             out_dtype=np.float32) -> np.ndarray:
+    if cfa_type not in PATTERN:
+        return image.astype(out_dtype, copy=False)
 
-    img = image.astype(np.float32)
+    img = np.squeeze(image).astype(np.float32)
 
     # ブラックレベル補正
     img = img - black_level

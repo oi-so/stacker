@@ -24,9 +24,10 @@ class ImageTransformer:
             Transformed image with same dtype as input
         """
 
-        t = SimilarityTransform(
-            matrix=transform.matrix
-        )
+        if transform.matrix is None:
+            return image.astype(np.float32, copy=False)
+
+        t = SimilarityTransform(matrix=transform.matrix)
 
         return warp(
             image,

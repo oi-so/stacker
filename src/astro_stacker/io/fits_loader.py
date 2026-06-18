@@ -7,7 +7,6 @@ and various FITS array shapes.
 from astropy.io import fits
 import numpy as np
 from pathlib import Path
-import exifread
 from typing import cast
 from astropy.io.fits import PrimaryHDU
 from astropy.wcs import WCS
@@ -28,7 +27,7 @@ def load_fits_info(path: Path) -> AstroImage:
     Raises:
         ValueError: If FITS array has unsupported shape
     """
-    with fits.open(path) as hdul:
+    with fits.open(path, uint=True, do_not_scale_image_data=False) as hdul:
         hud = cast(PrimaryHDU, hdul[0])
         header = hud.header
         shape = hud.shape
@@ -55,7 +54,7 @@ def load_fits_info(path: Path) -> AstroImage:
     # Try to extract WCS if available
     try:
         wcs = WCS(header)
-    except:
+    except Exception:
         wcs = None
 
     if channels == 1:
@@ -77,7 +76,9 @@ def load_fits_info(path: Path) -> AstroImage:
         iso=header.get('ISO'),
         f_number=header.get('FNUMBER'),
         exif=dict(header),
-        wcs=wcs
+        wcs=wcs,
+        is_master=str(header.get("FRAMTYP", "")).startswith("master_"),
+        master_type=header.get("FRAMTYP") if str(header.get("FRAMTYP", "")).startswith("master_") else None,
     )
     return AstroImage(info=info, image=None) 
 
@@ -94,7 +95,7 @@ def load_fits_image(path: Path) -> np.ndarray:
     Raises:
         ValueError: If no image data found in FITS file
     """
-    data = fits.getdata(path)
+    data = fits.getdata(path, uint=True, do_not_scale_image_data=False)
 
     if data is None:
         raise ValueError(
@@ -111,7 +112,5 @@ def load_fits_image(path: Path) -> np.ndarray:
             # Likely channels-first, move to channels-last
             data = np.moveaxis(data, 0, -1)
 
-    return np.asarray(
-        data,
-        dtype=np.float32
-    )
+    data = np.asarray(data, dtype=np.float32)
+    return np.clip(data, 0, None)
