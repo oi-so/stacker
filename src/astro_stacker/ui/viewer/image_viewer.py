@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QPainter
+from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QPainter, QNativeGestureEvent
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 import numpy as np
 
@@ -14,7 +14,7 @@ class ImageViewer(QGraphicsView):
         self.setRenderHint(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self._pixmap_item = None
 
-         # ドラッグで移動
+        # ドラッグで移動
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
 
         # アンカーをマウス位置へ
@@ -63,6 +63,19 @@ class ImageViewer(QGraphicsView):
     def mouseDoubleClickEvent(self, event: QMouseEvent) -> None:
         self.fit_image()
         super().mouseDoubleClickEvent(event)
+
+
+    def event(self, event):
+        if isinstance(event, QNativeGestureEvent):
+            if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+                factor = 1.0 + event.value()
+
+                self.scale(factor, factor)
+
+                return True
+
+        return super().event(event)
+    
 
 
     def keyPressEvent(self, event):
