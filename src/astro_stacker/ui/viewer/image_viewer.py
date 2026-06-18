@@ -1,17 +1,19 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QPainter, QNativeGestureEvent
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 import numpy as np
 
 
 class ImageViewer(QGraphicsView):
+    zoom_changed = Signal(float)
+
     def __init__(self):
         super().__init__()
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
         self.setBackgroundBrush(Qt.GlobalColor.black)
         self._pixmap_item: QGraphicsPixmapItem | None = None
-        self.setRenderHint(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
         self._pixmap_item = None
 
         # ドラッグで移動
@@ -24,8 +26,8 @@ class ImageViewer(QGraphicsView):
         self.setResizeAnchor(
             QGraphicsView.ViewportAnchor.AnchorUnderMouse
         )
+        self._fit_mode = True
 
-        self._zoom = 0
 
     
     def fit_image(self):
@@ -37,7 +39,28 @@ class ImageViewer(QGraphicsView):
             Qt.AspectRatioMode.KeepAspectRatio
         )
 
-        self._zoom = 0
+        self._fit_mode = True
+        self.zoom_changed.emit(
+            self.zoom_percent()
+        )
+
+    def zoom_percent(self) -> float:
+        return round(self.transform().m11() * 100)
+    
+    def set_zoom(self, percent: float):
+        if self._pixmap_item is None:
+            return
+
+        scale = percent / 100
+
+        self.resetTransform()
+        self.scale(scale, scale)
+
+        self._fit_mode = False
+        self.zoom_changed.emit(
+            self.zoom_percent()
+        )
+
 
     def set_image(self, image: np.ndarray | None) -> None:
         self.scene.clear()
@@ -56,7 +79,7 @@ class ImageViewer(QGraphicsView):
             return
 
         # 全体表示中だけ再Fit
-        if self._zoom == 0:
+        if self._fit_mode:
             self.fit_image()
 
     
@@ -67,11 +90,11 @@ class ImageViewer(QGraphicsView):
 
     def event(self, event):
         if isinstance(event, QNativeGestureEvent):
-            if event.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
-                factor = 1.0 + event.value()
-
-                self.scale(factor, factor)
-
+            if (
+                event.gestureType()
+                == Qt.NativeGestureType.ZoomNativeGesture
+            ):
+                self.zoom_by_factor(1.0 + event.value())
                 return True
 
         return super().event(event)
@@ -82,8 +105,7 @@ class ImageViewer(QGraphicsView):
         if event.key() == Qt.Key.Key_0:
             self.fit_image()
         elif event.key() == Qt.Key.Key_1:
-            self.resetTransform()
-            self._zoom = 1
+            self.set_zoom(100)
 
         super().keyPressEvent(event)
 
@@ -120,23 +142,33 @@ class ImageViewer(QGraphicsView):
         if self._pixmap_item is None:
             return
 
-        factor = 1.25
-
         if event.angleDelta().y() > 0:
-            scale = factor
-            self._zoom += 1
+            self.zoom_by_factor(1.25)
         else:
-            scale = 1 / factor
-            self._zoom -= 1
+            self.zoom_by_factor(0.8)
 
-        # 縮小しすぎ防止
-        if self._zoom < -5:
-            self._zoom = -5
+    
+    def zoom_by_factor(self, factor):
+        if self._pixmap_item is None:
             return
 
-        # 拡大しすぎ防止
-        if self._zoom > 30:
-            self._zoom = 30
-            return
+        self._fit_mode = False
 
-        self.scale(scale, scale)
+        new_scale = (
+            self.transform().m11() * factor
+        )
+
+        new_scale = min(
+            max(new_scale, 0.05),
+            32.0
+        )
+
+        factor = (
+            new_scale
+            / self.transform().m11()
+        )
+
+        self.scale(factor, factor)
+        self.zoom_changed.emit(
+            self.zoom_percent()
+        )

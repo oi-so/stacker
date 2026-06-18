@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QToolBar,
     QWidget,
     QVBoxLayout,
+    QLabel,
+    QPushButton,
 )
 
 from ..core.provider import ImageManagerProvider
@@ -112,6 +114,12 @@ class MainWindow(QMainWindow):
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         self.addToolBar(toolbar)
 
+        self.zoom_out_button = QPushButton("－")
+        self.zoom_label = QLabel("100%")
+        self.zoom_in_button = QPushButton("＋")
+        self.zoom_100_button = QPushButton("100%")
+        self.zoom_fit_button = QPushButton("Fit")
+
         self.add_action = QAction("📂\nフレーム追加", self)
         self.align_action = QAction("▶\n位置合わせ", self)
         self.stack_action = QAction("⚙\nスタック", self)
@@ -137,6 +145,36 @@ class MainWindow(QMainWindow):
         self.stack_action.triggered.connect(self._run_stacking)
         self.save_action.triggered.connect(self._save_result)
         self.reset_action.triggered.connect(self._reset_project)
+
+        toolbar.addWidget(self.zoom_out_button)
+        toolbar.addWidget(self.zoom_label)
+        toolbar.addWidget(self.zoom_in_button)
+        toolbar.addWidget(self.zoom_100_button)
+        toolbar.addWidget(self.zoom_fit_button)
+
+        self.zoom_out_button.clicked.connect(
+            lambda: self.viewer.set_zoom(
+                self.viewer.zoom_percent() / 1.25
+            )
+        )
+
+        self.zoom_in_button.clicked.connect(
+            lambda: self.viewer.set_zoom(
+                self.viewer.zoom_percent() * 1.25
+            )
+        )
+
+        self.zoom_100_button.clicked.connect(
+            lambda: self.viewer.set_zoom(100)
+        )
+
+        self.zoom_fit_button.clicked.connect(
+            self.viewer.fit_image
+        )
+        self.viewer.zoom_changed.connect(
+            lambda z:
+                self.zoom_label.setText(f"{z:.0f}%")
+        )
 
     def _create_menu(self):
         file_menu = self.menuBar().addMenu("ファイル")
