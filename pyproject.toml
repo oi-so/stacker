@@ -47,7 +47,7 @@ dependencies = [
 "exifread>=3.5.1",
 "matplotlib>=3.10.9",
 "astroalign>=2.6.2",
-"pyside6>=6.8,<7"
+"pyside6>=6.8,<6.9"
 ]
 
 [project.optional-dependencies]
