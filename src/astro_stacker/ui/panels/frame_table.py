@@ -149,7 +149,6 @@ class FrameTable(QWidget):
         table.setSortingEnabled(True)
         table.resizeColumnsToContents()
         table.blockSignals(False)
-        table.clearSelection()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():

@@ -205,7 +205,7 @@ class MainWindow(QMainWindow):
         self.frame_table.frame_selected.connect(self._preview_frame)
         self.frame_table.enabled_changed.connect(lambda *_: self._update_actions())
         self.frame_table.removed.connect(self.controller.remove_frames)
-        self.frame_table.selection_cleared.connect(lambda: self.viewer.set_image(None))
+        self.frame_table.selection_cleared.connect(self.viewer.set_image(None))
 
     def _install_logging(self):
         handler = QtLogHandler()
@@ -287,8 +287,8 @@ class MainWindow(QMainWindow):
     def _worker_done(self, on_success):
         self.progress.setVisible(False)
         self._set_busy(False)
-        on_success()
         self._refresh_tables()
+        on_success()
         self._update_actions()
         self._thread = None
         self._worker = None
@@ -330,6 +330,9 @@ class MainWindow(QMainWindow):
     def _set_busy(self, busy: bool):
         for action in (self.add_action, self.align_action, self.stack_action, self.save_action, self.reset_action):
             action.setEnabled(not busy)
+        self.frame_table.setEnabled(not busy)
+        self.project_tree.setEnabled(not busy)
+        self.bottom_tabs.setEnabled(not busy)
 
     def _update_actions(self):
         has_lights = bool(self.controller.project.light_frames)
