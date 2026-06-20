@@ -63,6 +63,8 @@ class ImageViewer(QGraphicsView):
 
 
     def set_image(self, image: np.ndarray | None) -> None:
+        need_fits_image = False
+        if self._pixmap_item is None: need_fits_image = True
         self.scene.clear()
         self._pixmap_item = None
         if image is None:
@@ -70,7 +72,7 @@ class ImageViewer(QGraphicsView):
         qimage = self._to_qimage(image)
         self._pixmap_item = self.scene.addPixmap(QPixmap.fromImage(qimage))
         self.scene.setSceneRect(self._pixmap_item.boundingRect())
-        self.fit_image()
+        if need_fits_image: self.fit_image()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
