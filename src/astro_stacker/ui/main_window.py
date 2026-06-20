@@ -150,6 +150,7 @@ class MainWindow(QMainWindow):
         self.save_action.triggered.connect(self._save_result)
         self.reset_action.triggered.connect(self._reset_project)
 
+
         toolbar.addWidget(self.zoom_out_button)
         toolbar.addWidget(self.zoom_label)
         toolbar.addWidget(self.zoom_in_button)
@@ -203,6 +204,8 @@ class MainWindow(QMainWindow):
         self.frame_table.files_dropped.connect(self.controller.add_files)
         self.frame_table.frame_selected.connect(self._preview_frame)
         self.frame_table.enabled_changed.connect(lambda *_: self._update_actions())
+        self.frame_table.removed.connect(self.controller.remove_frames)
+        self.frame_table.selection_cleared.connect(lambda: self.viewer.set_image(None))
 
     def _install_logging(self):
         handler = QtLogHandler()
@@ -228,6 +231,10 @@ class MainWindow(QMainWindow):
         self.frame_table.set_frames(self.controller.frame_map())
 
     def _preview_frame(self, image):
+        if image is None:
+            self.viewer.set_image(None)
+            return
+
         try:
             nd_img = self.manager.get_image(image)
             nd_img = (

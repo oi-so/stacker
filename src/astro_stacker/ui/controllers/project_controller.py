@@ -87,3 +87,38 @@ class ProjectController(QObject):
         for frame_type in FrameType:
             self.category_count_changed.emit(frame_type, 0)
     
+
+    def remove_frames(self, frame_type: FrameType, images) -> None:
+        frames = self._get_frame_list(
+            frame_type
+        )
+
+        changed = False
+
+        for image in images:
+            try:
+                frames.remove(image)
+                self.project.known_paths.discard(
+                    image.info.path
+                )
+                changed = True
+            except ValueError:
+                pass
+
+        if not changed:
+            return
+
+        self.category_count_changed.emit(
+            frame_type,
+            len(frames),
+        )
+
+        self.project_changed.emit()
+
+        self.frames_changed.emit(
+            frames
+        )
+
+        self.all_frames_changed.emit(
+            self.frame_map()
+        )

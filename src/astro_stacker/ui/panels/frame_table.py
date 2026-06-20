@@ -13,10 +13,45 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
+    QMenu,
 )
+from PySide6.QtGui import QKeyEvent
 
 from ..constants import FrameType
 from ...io.image_data import AstroImage
+
+
+
+class FrameQTableWidget(QTableWidget):
+    space_pressed = Signal()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key.Key_Space:
+            self.space_pressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # クリックされた位置のセルインデックスを取得
+            index = self.indexAt(event.position().toPoint())
+            if index.isValid() and index.column() == 0:
+                # 「使用」チェックボックスの列（第0列）がクリックされた場合
+                item = self.item(index.row(), index.column())
+                if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                    # 現在の複数選択状態を維持したまま、チェック状態だけを反転させる
+                    current_state = item.checkState()
+                    next_state = (
+                        Qt.CheckState.Unchecked 
+                        if current_state == Qt.CheckState.Checked 
+                        else Qt.CheckState.Checked
+                    )
+                    item.setCheckState(next_state)
+                    event.accept()
+                    return # 通常のクリック処理（選択状態を1行に絞る挙動）をスキップ
+
+        super().mousePressEvent(event)
 
 
 class NumericItem(QTableWidgetItem):
@@ -32,6 +67,8 @@ class FrameTable(QWidget):
     frame_selected = Signal(object)
     files_dropped = Signal(object, object)
     enabled_changed = Signal(object, bool)
+    removed = Signal(object, object)
+    selection_cleared = Signal(object)
 
     HEADERS = ["使用", "ファイル名", "日時", "ISO", "SS", "F値", "スコア"]
 
@@ -45,6 +82,8 @@ class FrameTable(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         self.tabs = QTabWidget()
         layout.addWidget(self.tabs)
+        self._selected_rows = {ft: set() for ft in FrameType}
+        self._bulk_updating = False
 
         for frame_type in FrameType:
             page = QWidget()
@@ -57,15 +96,22 @@ class FrameTable(QWidget):
             buttons.addStretch()
             page_layout.addLayout(buttons)
 
-            table = QTableWidget(0, len(self.HEADERS))
+            table = FrameQTableWidget(0, len(self.HEADERS))
             table.setHorizontalHeaderLabels(self.HEADERS)
             table.setSortingEnabled(True)
             table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+            table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
             table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-            table.itemSelectionChanged.connect(lambda ft=frame_type: self._emit_selected(ft))
             table.itemChanged.connect(lambda item, ft=frame_type: self._on_item_changed(ft, item))
             page_layout.addWidget(table)
 
+            table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            table.cellDoubleClicked.connect(lambda row, col, ft=frame_type: self._toggle_cell(ft, row, col))
+
+            table.customContextMenuRequested.connect(lambda pos, ft=frame_type: self._show_menu(ft, pos))
+            table.itemSelectionChanged.connect(lambda ft=frame_type: self._on_selection_changed(ft))
+            table.space_pressed.connect(lambda ft=frame_type: self._toggle_selected_enabled(ft))
+    
             select_all.clicked.connect(lambda checked=False, ft=frame_type: self._set_all(ft, True))
             clear_all.clicked.connect(lambda checked=False, ft=frame_type: self._set_all(ft, False))
             self._tables[frame_type] = table
@@ -103,6 +149,7 @@ class FrameTable(QWidget):
         table.setSortingEnabled(True)
         table.resizeColumnsToContents()
         table.blockSignals(False)
+        table.clearSelection()
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -134,20 +181,143 @@ class FrameTable(QWidget):
         table = self._tables[frame_type]
         rows = table.selectionModel().selectedRows()
         if not rows:
+            self.frame_selected.emit(None)
             return
         row_item = table.item(rows[0].row(), 0)
         source_row = row_item.data(Qt.ItemDataRole.UserRole)
         self.frame_selected.emit(self._frames[frame_type][source_row])
 
-    def _on_item_changed(self, frame_type: FrameType, item: QTableWidgetItem) -> None:
-        if item.column() != 0:
-            return
-        row = item.data(Qt.ItemDataRole.UserRole)
-        image = self._frames[frame_type][row]
-        image.info.enabled = item.checkState() == Qt.CheckState.Checked
-        self.enabled_changed.emit(image, image.info.enabled)
+    def _on_item_changed(self, frame_type: FrameType, item: QTableWidgetItem):
+        if self._bulk_updating: return
+        if item.column() != 0: return
+
+        table = self._tables[frame_type]
+        checked = (item.checkState() == Qt.CheckState.Checked)
+        
+        # 現在選択されている行をそのまま取得（全操作で維持されるようになりました）
+        selected_rows = {index.row() for index in table.selectionModel().selectedRows()}
+
+        # 複数選択されていて、クリックされた（変更された）行がその選択内に含まれる場合
+        if len(selected_rows) > 1 and item.row() in selected_rows:
+            self._bulk_updating = True
+            table.blockSignals(True) 
+
+            for view_row in selected_rows:
+                other = table.item(view_row, 0)
+                if other is item or other is None:
+                    continue
+                other.setCheckState(item.checkState())
+
+            table.blockSignals(False)
+            self._bulk_updating = False
+
+        # データモデル（AstroImage）への反映
+        target_rows = selected_rows if (len(selected_rows) > 1 and item.row() in selected_rows) else {item.row()}
+        
+        for view_row in target_rows:
+            enabled_item = table.item(view_row, 0)
+            if enabled_item is None: continue
+            
+            source_row = enabled_item.data(Qt.ItemDataRole.UserRole)
+            image = self._frames[frame_type][source_row]
+            image.info.enabled = checked
+            self.enabled_changed.emit(image, checked)
 
     def _set_all(self, frame_type: FrameType, enabled: bool) -> None:
         for image in self._frames[frame_type]:
             image.info.enabled = enabled
         self.show_frames(frame_type, self._frames[frame_type])
+
+    def _selected_source_rows(self, frame_type: FrameType) -> list[int]:
+        table = self._tables[frame_type]
+        rows = []
+        for index in table.selectionModel().selectedRows():
+            item = table.item(index.row(), 0)
+            rows.append(item.data(Qt.ItemDataRole.UserRole))
+        return sorted(set(rows))
+
+    def _selected_images(self, frame_type: FrameType) -> list[AstroImage]:
+        rows = self._selected_source_rows(frame_type)
+        return [self._frames[frame_type][row] for row in rows]
+
+    def _set_selected_enabled(self, frame_type: FrameType, enabled: bool) -> None:
+        table = self._tables[frame_type]
+        for index in table.selectionModel().selectedRows():
+            item = table.item(index.row(), 0)
+            item.setCheckState(Qt.CheckState.Checked if enabled else Qt.CheckState.Unchecked)
+
+    def _remove_selected(self, frame_type: FrameType) -> None:
+        table = self._tables[frame_type]
+        images = self._selected_images(frame_type)
+        if not images:
+            return
+
+        table.clearSelection()
+        self._selected_rows[frame_type].clear()
+        self.frame_selected.emit(None)
+        self.removed.emit(frame_type, images)
+
+    def _show_menu(self, frame_type: FrameType, pos):
+        table = self._tables[frame_type]
+        menu = QMenu(self)
+
+        enable_action = menu.addAction("選択フレームを使用")
+        disable_action = menu.addAction("選択フレームを無効化")
+        menu.addSeparator()
+        remove_action = menu.addAction("選択フレームを削除")
+
+        action = menu.exec(table.viewport().mapToGlobal(pos))
+
+        if action == enable_action:
+            self._set_selected_enabled(frame_type, True)
+        elif action == disable_action:
+            self._set_selected_enabled(frame_type, False)
+        elif action == remove_action:
+            self._remove_selected(frame_type)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        frame_type = self.current_frame_type()
+
+        if event.key() == Qt.Key.Key_Delete:
+            self._remove_selected(frame_type)
+            return
+
+        if event.key() == Qt.Key.Key_Space:
+            frame_type = self.current_frame_type()
+            table = self._tables[frame_type]
+            rows = table.selectionModel().selectedRows()
+            if not rows:
+                return
+
+            item = table.item(rows[0].row(), 0)
+            checked = (item.checkState() == Qt.CheckState.Checked)
+            item.setCheckState(Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
+            event.accept()
+            return
+
+        super().keyPressEvent(event)
+
+    def _toggle_cell(self, frame_type, row, col) -> None:
+        if col != 0:
+            return
+        table = self._tables[frame_type]
+        item = table.item(row, 0)
+        checked = (item.checkState() == Qt.CheckState.Checked)
+        item.setCheckState(Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
+
+    def _on_selection_changed(self, frame_type: FrameType):
+        table = self._tables[frame_type]
+        self._selected_rows[frame_type] = {
+            index.row() for index in table.selectionModel().selectedRows()
+        }
+        self._emit_selected(frame_type)
+
+    def _toggle_selected_enabled(self, frame_type: FrameType):
+        table = self._tables[frame_type]
+        rows = table.selectionModel().selectedRows()
+        if not rows:
+            return
+
+        item = table.item(rows[0].row(), 0)
+        checked = (item.checkState() == Qt.CheckState.Checked)
+        item.setCheckState(Qt.CheckState.Unchecked if checked else Qt.CheckState.Checked)
