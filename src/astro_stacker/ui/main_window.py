@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QTabWidget,
+    QHBoxLayout,
 )
 
 from ..core.provider import ImageManagerProvider
@@ -45,6 +46,8 @@ logger = logging.getLogger(__name__)
 class PipelineWorker(QObject):
     finished = Signal()
     failed = Signal(object)
+
+    progress = Signal(int, int, str)
 
     def __init__(self, func):
         super().__init__()
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
         self._restore_window()
         self._install_logging()
 
+
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -87,8 +91,6 @@ class MainWindow(QMainWindow):
         self.info_panel = InfoPanel()
         self.frame_table = FrameTable()
         self.log_panel = LogPanel()
-        self.progress = QProgressBar()
-        self.progress.setVisible(False)
 
         self.bottom_tabs = QTabWidget()
         self.bottom_tabs.addTab(self.frame_table, "フレーム一覧")
@@ -104,8 +106,21 @@ class MainWindow(QMainWindow):
         main_splitter.addWidget(center_splitter)
         main_splitter.addWidget(self.bottom_tabs)
         main_splitter.setStretchFactor(0, 1)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress_label = QLabel("準備完了")
+        self.cancel_button = QPushButton("キャンセル")
+        self.cancel_button.setEnabled(False)
+
+        progress_layout = QHBoxLayout()
+        progress_layout.addWidget(self.progress_label)
+        progress_layout.addWidget(self.progress, 1)
+        progress_layout.addWidget(self.cancel_button)
+
         layout.addWidget(main_splitter)
-        layout.addWidget(self.progress)
+        layout.addLayout(progress_layout)
 
         self._create_toolbar()
         self._create_menu()
@@ -267,9 +282,12 @@ class MainWindow(QMainWindow):
 
         self._run_worker(work, on_success=self._stacking_finished)
 
+
     def _run_worker(self, func, on_success):
         self.progress.setRange(0, 0)
-        self.progress.setVisible(True)
+        self.progress_label.setText("処理中...")
+        self.cancel_button.setEnabled(True)
+
         self._set_busy(True)
         thread = QThread(self)
         worker = PipelineWorker(func)
@@ -278,6 +296,7 @@ class MainWindow(QMainWindow):
         worker.failed.connect(lambda exc: ErrorDialog.show_exception(self, "処理エラー", exc))
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+        worker.progress.connect(self._update_progress)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(lambda: self._worker_done(on_success))
         self._thread = thread
@@ -285,7 +304,10 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _worker_done(self, on_success):
-        self.progress.setVisible(False)
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress_label.setText("準備完了")
+        self.cancel_button.setEnabled(False)
         self._set_busy(False)
         self._refresh_tables()
         on_success()
@@ -358,3 +380,11 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/state", self.saveState())
         super().closeEvent(event)
+
+
+    def _update_progress( self, current: int, total: int, text: str):
+        self.progress.setRange(0, total)
+        self.progress.setValue(current)
+        self.progress_label.setText(
+            f"{current}/{total} : {text}"
+        )
