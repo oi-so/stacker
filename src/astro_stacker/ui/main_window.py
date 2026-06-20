@@ -47,20 +47,28 @@ class PipelineWorker(QObject):
     finished = Signal()
     failed = Signal(object)
 
-    progress = Signal(int, int, str)
+    progress = Signal(str, int, int, str)
 
     def __init__(self, func):
         super().__init__()
         self.func = func
+        self.cancel_requested = False
 
     @Slot()
     def run(self):
         try:
-            self.func()
+            self.func(
+                self.progress.emit, 
+                lambda: self.cancel_requested
+            )
         except Exception as exc:
             self.failed.emit(exc)
         finally:
             self.finished.emit()
+
+    def cancel(self):
+        self.cancel_requested = True
+
 
 
 class MainWindow(QMainWindow):
@@ -113,6 +121,7 @@ class MainWindow(QMainWindow):
         self.progress_label = QLabel("準備完了")
         self.cancel_button = QPushButton("キャンセル")
         self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(lambda: self._worker.cancel())
 
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(self.progress_label)
@@ -267,9 +276,9 @@ class MainWindow(QMainWindow):
         if AlignmentSettingsDialog(self.controller.project, self).exec() != AlignmentSettingsDialog.DialogCode.Accepted:
             return
 
-        def work():
+        def work(progress, is_cancelled):
             provider = ImageManagerProvider(self.manager)
-            AlignmentPipeline(provider).run(self.controller.project, self.controller.project.settings.alignment)
+            AlignmentPipeline(provider).run(self.controller.project, self.controller.project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
 
         self._run_worker(work, on_success=self._alignment_finished)
 
@@ -277,8 +286,8 @@ class MainWindow(QMainWindow):
         if StackingSettingsDialog(self.controller.project, self).exec() != StackingSettingsDialog.DialogCode.Accepted:
             return
 
-        def work():
-            ProcessingPipeline(self.manager).run(self.controller.project)
+        def work(progress, is_cancelled):
+            ProcessingPipeline(self.manager).run(self.controller.project, progress=progress, is_cancelled=is_cancelled)
 
         self._run_worker(work, on_success=self._stacking_finished)
 
@@ -381,10 +390,11 @@ class MainWindow(QMainWindow):
         self.settings.setValue("window/state", self.saveState())
         super().closeEvent(event)
 
-
-    def _update_progress( self, current: int, total: int, text: str):
+    @Slot(str, int, int, str)
+    def _update_progress(self, phase: str, current: int, total: int, message: str):
         self.progress.setRange(0, total)
         self.progress.setValue(current)
+
         self.progress_label.setText(
-            f"{current}/{total} : {text}"
+            f"{phase} ({current}/{total}) : {message}"
         )

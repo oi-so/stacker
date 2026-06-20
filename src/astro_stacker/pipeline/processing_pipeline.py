@@ -179,13 +179,16 @@ class ProcessingPipeline:
         project.output_path = path
         logger.info("Auto-saved stacked result: %s", path)
 
-    def run(self, project: Project) -> None:
+    def run(self, project: Project, progress=None, is_cancelled=None) -> None:
         project.light_frames = [
             frame for frame in project.light_frames
             if (frame.info.exif or {}).get("FRAMTYP") != "stacked_light"
         ]
         if not project.light_frames:
             raise ValueError("No light frames")
+        
+        if progress:
+            progress("マスター生成", 0, 1, "キャリブレーションフレームを作成中...")
 
         # Preserve manual settings when called from UI, but auto-enable frame
         # types in CLI/test use when the user has not opened settings.
@@ -211,11 +214,14 @@ class ProcessingPipeline:
 
         logger.info("Starting alignment")
         alignment_pipeline = AlignmentPipeline(provider)
-        alignment_pipeline.run(project, project.settings.alignment)
+        alignment_pipeline.run(project, project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
+        if is_cancelled and is_cancelled(): return
 
         if not calibrate_before_align:
             provider = CalibratedFrameProvider(provider, calibrator)
 
+        if progress:
+            progress("スタック", 0, 1, "準備中")
         stack_provider = provider
         if project.settings.debayer_timing == DebayerTiming.BEFORE_STACK:
             stack_provider = DebayerFrameProvider(stack_provider)
@@ -223,4 +229,7 @@ class ProcessingPipeline:
         logger.info("Starting stacking")
         stacking_pipeline = StackingPipeline(stack_provider)
         stacking_pipeline.run(project, project.settings.light_frame)
+
+        if progress:
+            progress("自動保存中", 0, 1, "stacked.fits")
         self._auto_save_stacked(project)
