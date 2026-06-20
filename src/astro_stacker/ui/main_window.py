@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QLabel,
     QPushButton,
+    QTabWidget,
 )
 
 from ..core.provider import ImageManagerProvider
@@ -89,6 +90,10 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setVisible(False)
 
+        self.bottom_tabs = QTabWidget()
+        self.bottom_tabs.addTab(self.frame_table, "フレーム一覧")
+        self.bottom_tabs.addTab(self.log_panel, "ログ")
+
         center_splitter = QSplitter(Qt.Orientation.Horizontal)
         center_splitter.addWidget(self.project_tree)
         center_splitter.addWidget(self.viewer)
@@ -97,8 +102,7 @@ class MainWindow(QMainWindow):
 
         main_splitter = QSplitter(Qt.Orientation.Vertical)
         main_splitter.addWidget(center_splitter)
-        main_splitter.addWidget(self.frame_table)
-        main_splitter.addWidget(self.log_panel)
+        main_splitter.addWidget(self.bottom_tabs)
         main_splitter.setStretchFactor(0, 1)
         layout.addWidget(main_splitter)
         layout.addWidget(self.progress)
