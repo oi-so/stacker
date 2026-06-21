@@ -19,9 +19,12 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTextEdit,
+    QRadioButton,
+    QVBoxLayout
 )
 
 from ..project.project import Project
+from ..project.settings import AlignmentMode
 
 
 class AlignmentSettingsDialog(QDialog):
@@ -53,6 +56,24 @@ class AlignmentSettingsDialog(QDialog):
         for box in (self.use_dark, self.use_bias, self.use_flat, self.use_flat_dark):
             calibration_layout.addWidget(box)
         layout.addRow("使用フレーム", calibration_box)
+
+        self.mode_all = QRadioButton("全て位置合わせ")
+        self.mode_new = QRadioButton("未位置合わせ画像のみ追加")
+
+        sessions = project.get_alignment_sessions()
+        has_session = len(sessions) == 1
+        self.mode_new.setEnabled(has_session)
+        if self.settings.value("alignment/mode", "all") == "new_only" and has_session:
+            self.mode_new.setChecked(True)
+        else:
+            self.mode_all.setChecked(True)
+
+        mode_box = QGroupBox()
+        mode_layout = QVBoxLayout(mode_box)
+        mode_layout.addWidget(self.mode_all)
+        mode_layout.addWidget(self.mode_new)
+
+        layout.addRow("位置合わせ対象", mode_box)
 
         self.reference = QComboBox()
         self.reference.addItems(["自動=中央", "自動=最高品質", "手動選択"])
@@ -86,6 +107,8 @@ class AlignmentSettingsDialog(QDialog):
         calibration.use_biases = self.use_bias.isChecked()
         calibration.use_flats = self.use_flat.isChecked()
         calibration.use_flat_darks = self.use_flat_dark.isChecked()
+        alignment.mode = (AlignmentMode.ALL if self.mode_all.isChecked() else AlignmentMode.NEW_ONLY)
+
 
         self.settings.setValue("alignment/calibrate_before", alignment.calibrate_before_align)
         self.settings.setValue("alignment/reference", self.reference.currentIndex())
@@ -95,6 +118,7 @@ class AlignmentSettingsDialog(QDialog):
         self.settings.setValue("calibration/use_biases", calibration.use_biases)
         self.settings.setValue("calibration/use_flats", calibration.use_flats)
         self.settings.setValue("calibration/use_flat_darks", calibration.use_flat_darks)
+        self.settings.setValue("alignment/mode", alignment.mode.value,)
         super().accept()
 
 

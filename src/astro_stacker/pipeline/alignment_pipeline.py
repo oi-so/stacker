@@ -23,7 +23,7 @@ class AlignmentPipeline:
             if frame.info.enabled
         ]
 
-        if project.reference_image is None:
+        if project.reference_image is None or project.reference_image not in enabled_frames:
             project.reference_image = (
                 enabled_frames[
                     len(enabled_frames) // 2
@@ -31,15 +31,18 @@ class AlignmentPipeline:
             )
         
         if settings.mode == AlignmentMode.ALL:
+            frames_to_align = enabled_frames
+            project.reference_image = (
+                frames_to_align[
+                    len(frames_to_align) // 2
+                ]
+            )
             session_id = project.create_alignment_session()
         else:
             session_id = project.current_alignment_session_id
             if session_id is None:
                 session_id = project.create_alignment_session()
 
-        if settings.mode == AlignmentMode.ALL:
-            frames_to_align = enabled_frames
-        else:
             sessions = project.get_alignment_sessions()
             if len(sessions) > 1: 
                 raise ValueError(
@@ -60,12 +63,12 @@ class AlignmentPipeline:
 
 
         reference = project.reference_image
-        
+
         finished = 0
         if reference in frames_to_align:
             finished = 1
             if progress:
-                progress("位置合わせ", finished, total, reference.info.path.name)
+                progress("参照画像の星を検出中", finished, total, reference.info.path.name)
 
         reference.info.alignment_session_id = session_id
         reference.info.alignment_data = AlignmentData()
@@ -81,7 +84,7 @@ class AlignmentPipeline:
             finished += 1
             if is_cancelled and is_cancelled(): return
             if progress:
-                progress("位置合わせ", finished, total, astro_image.info.path.name)
+                progress("位置合わせ中", finished, total, astro_image.info.path.name)
 
             image = self.provider.get_image(astro_image)
             catalog = detect_stars(image, sigma=settings.sigma)
