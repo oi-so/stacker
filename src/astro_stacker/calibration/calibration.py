@@ -93,5 +93,8 @@ class MasterFrameBuilder:
         self.provider = provider
         self.combiner = ImageCombiner(provider)
 
-    def build(self, images: Iterable[AstroImage], method: Method = "median") -> np.ndarray:
-        return self.combiner.combine(images, method).astype(np.float32, copy=False)
+    def build(self, images: list[AstroImage], method: Method = "median", progress = None, is_cancelled=None, master_type=None) -> np.ndarray | None:
+        if master_type is None: master_type = "スタック画像"
+        img = self.combiner.combine(images, method, progress, is_cancelled, master_type)
+        if img is None: return None
+        return img.astype(np.float32, copy=False)

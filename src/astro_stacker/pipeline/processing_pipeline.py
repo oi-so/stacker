@@ -77,6 +77,8 @@ class ProcessingPipeline:
         use_frame: bool,
         method: str,
         master_type: str,
+        progress=None,
+        is_cancelled=None,
     ) -> np.ndarray | None:
         if not use_frame:
             return None
@@ -90,13 +92,13 @@ class ProcessingPipeline:
         if not inputs:
             return None
 
-        master = builder.build(inputs, method).astype(np.float32, copy=False)
+        master = builder.build(inputs, method, progress, is_cancelled, master_type).astype(np.float32, copy=False)
         for frame in inputs:
             frame.info.enabled = False
         self._save_master(project, frames, master, master_type)
         return master
 
-    def _build_master_frames(self, project: Project, builder: MasterFrameBuilder) -> None:
+    def _build_master_frames(self, project: Project, builder: MasterFrameBuilder, progress = None, is_cancelled = None) -> None:
         settings = project.settings.calibration
         settings.use_biases = settings.use_biases and bool(project.calibration_frames.biases)
         settings.use_darks = settings.use_darks and bool(project.calibration_frames.darks)
@@ -111,6 +113,8 @@ class ProcessingPipeline:
             settings.use_biases,
             project.settings.bias_frame.method,
             "master_bias",
+            progress,
+            is_cancelled,
         )
         dark = self._build_or_load_master(
             project,
@@ -119,6 +123,8 @@ class ProcessingPipeline:
             settings.use_darks,
             project.settings.dark_frame.method,
             "master_dark",
+            progress,
+            is_cancelled,
         )
         flat_dark = self._build_or_load_master(
             project,
@@ -127,6 +133,8 @@ class ProcessingPipeline:
             settings.use_flat_darks,
             project.settings.flat_dark_frame.method,
             "master_flat_dark",
+            progress,
+            is_cancelled,
         )
         flat = self._build_or_load_master(
             project,
@@ -135,6 +143,8 @@ class ProcessingPipeline:
             settings.use_flats,
             project.settings.flat_frame.method,
             "master_flat",
+            progress,
+            is_cancelled,
         )
 
         if bias is not None:
@@ -201,7 +211,7 @@ class ProcessingPipeline:
         provider = ImageManagerProvider(self.manager)
         builder = MasterFrameBuilder(provider)
 
-        self._build_master_frames(project, builder)
+        self._build_master_frames(project, builder, progress, is_cancelled)
 
         calibrator = Calibrator(project, calibration)
         calibrate_before_align = getattr(
@@ -228,7 +238,7 @@ class ProcessingPipeline:
 
         logger.info("Starting stacking")
         stacking_pipeline = StackingPipeline(stack_provider)
-        stacking_pipeline.run(project, project.settings.light_frame)
+        stacking_pipeline.run(project, project.settings.light_frame, progress=progress, is_cancelled=is_cancelled)
 
         if progress:
             progress("自動保存中", 0, 1, "stacked.fits")
