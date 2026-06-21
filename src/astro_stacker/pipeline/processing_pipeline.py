@@ -222,9 +222,13 @@ class ProcessingPipeline:
         if calibrate_before_align:
             provider = CalibratedFrameProvider(provider, calibrator)
 
-        logger.info("Starting alignment")
-        alignment_pipeline = AlignmentPipeline(provider)
-        alignment_pipeline.run(project, project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
+        if not project.is_alignment_valid():
+            logger.info("Starting alignment")
+            alignment_pipeline = AlignmentPipeline(provider)
+            alignment_pipeline.run(project, project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
+        else:
+            logger.info("Using existing alignment")
+
         if is_cancelled and is_cancelled(): return
 
         if not calibrate_before_align:

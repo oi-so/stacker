@@ -185,6 +185,7 @@ class AstroImageInfo(SerializableMixin):
     enabled: bool = True
     is_master: bool = False
     master_type: str | None = None
+    alignment_session_id: str | None = None
 
 
 @dataclass

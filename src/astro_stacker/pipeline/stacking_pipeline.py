@@ -19,7 +19,7 @@ class StackingPipeline:
             settings.method,
             progress=progress,
             is_cancelled=is_cancelled,
-            combine_msg="ライトフレーム"
+            combine_msg="スタック後画像"
         )
 
         project.result.stacked_image = result

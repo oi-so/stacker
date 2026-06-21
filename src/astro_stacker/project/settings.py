@@ -11,6 +11,10 @@ class StackingSettings:
     iterations: int = 1
 
 
+class AlignmentMode(StrEnum):
+    ALL = "all"
+    NEW_ONLY = "new_only"
+
 
 @dataclass
 class AlignmentSettings:
@@ -18,6 +22,7 @@ class AlignmentSettings:
     sigma: float = 5.0
     reference_mode: str = "middle"
     calibrate_before_align: bool = True
+    mode: AlignmentMode = AlignmentMode.ALL
 
 
 @dataclass

@@ -1,6 +1,6 @@
 from ..core.provider import FrameProvider
 from ..project.project import Project
-from ..project.settings import AlignmentSettings
+from ..project.settings import AlignmentSettings, AlignmentMode
 from ..stars.detector import detect_stars
 from ..alignment.aligner import align_catalogs
 from ..io.image_data import TransformData, AlignmentData
@@ -17,43 +17,71 @@ class AlignmentPipeline:
     def run(self, project: Project, settings: AlignmentSettings, progress=None, is_cancelled=None):
         if not project.light_frames:
             raise ValueError("No light frames")
-
-
-        light_frames = [
+        
+        enabled_frames = [
             frame for frame in project.light_frames
             if frame.info.enabled
         ]
-        total = len(light_frames)
 
         if project.reference_image is None:
             project.reference_image = (
-                light_frames[
-                    len(light_frames) // 2
+                enabled_frames[
+                    len(enabled_frames) // 2
                 ]
             )
+        
+        if settings.mode == AlignmentMode.ALL:
+            session_id = project.create_alignment_session()
+        else:
+            session_id = project.current_alignment_session_id
+            if session_id is None:
+                session_id = project.create_alignment_session()
 
-        if progress:
-            progress("位置合わせ", 1, total, project.reference_image.info.path.name)
+        if settings.mode == AlignmentMode.ALL:
+            frames_to_align = enabled_frames
+        else:
+            sessions = project.get_alignment_sessions()
+            if len(sessions) > 1: 
+                raise ValueError(
+                    "異なる位置合わせグループが混在しています。\n"
+                    "全て位置合わせを実行して下さい。"
+                )
+
+            frames_to_align = [
+                frame
+                for frame in enabled_frames
+                if frame.info.alignment_session_id != session_id
+            ]
+
+        total = len(frames_to_align)
+        if total == 0:
+            logger.info("No frames need alignment")
+            return
+
 
         reference = project.reference_image
+        
+        finished = 0
+        if reference in frames_to_align:
+            finished = 1
+            if progress:
+                progress("位置合わせ", finished, total, reference.info.path.name)
+
+        reference.info.alignment_session_id = session_id
+        reference.info.alignment_data = AlignmentData()
+        reference.info.transform = TransformData()
         reference_image = self.provider.get_image(reference)
         reference_catalog = detect_stars(reference_image, sigma=settings.sigma)
         reference_catalog.stars = reference_catalog.brightest(settings.max_stars)
-        
-        
-        is_finished_astro_image = False
-        for i, astro_image in enumerate(light_frames, 2):
+
+        for astro_image in frames_to_align:
             if astro_image is reference:
-                astro_image.info.transform = TransformData()
-                astro_image.info.alignment_data = AlignmentData()
-                is_finished_astro_image = True
                 continue
 
+            finished += 1
             if is_cancelled and is_cancelled(): return
             if progress:
-                finished_frame_count = i - (1 if is_finished_astro_image else 0)
-                progress("位置合わせ", finished_frame_count, total, astro_image.info.path.name)
-
+                progress("位置合わせ", finished, total, astro_image.info.path.name)
 
             image = self.provider.get_image(astro_image)
             catalog = detect_stars(image, sigma=settings.sigma)
@@ -61,9 +89,12 @@ class AlignmentPipeline:
             result = align_catalogs(reference_catalog, catalog)
             astro_image.info.transform = result.transform
             astro_image.info.alignment_data = result.info
+            astro_image.info.alignment_session_id = session_id
             logger.info(
                 "Aligned %s: matched=%s rms=%.3f",
                 astro_image.info.path.name,
                 result.info.matched_star_count,
                 result.info.rms_error or 0.0,
             )
+
+        project.alignment_signature = project.make_alignment_signature()
