@@ -84,6 +84,7 @@ class FrameTable(QWidget):
         layout.addWidget(self.tabs)
         self._selected_rows = {ft: set() for ft in FrameType}
         self._bulk_updating = False
+        self._current_reference_image: AstroImage | None = None
 
         for frame_type in FrameType:
             page = QWidget()
@@ -120,12 +121,15 @@ class FrameTable(QWidget):
     def current_frame_type(self) -> FrameType:
         return list(FrameType)[self.tabs.currentIndex()]
 
-    def set_frames(self, frame_map: dict[FrameType, list[AstroImage]]) -> None:
+    def set_frames(self, frame_map: dict[FrameType, list[AstroImage]], reference_image: AstroImage | None = None) -> None:
         self._frames = frame_map
+        self._current_reference_image = reference_image
         for frame_type, frames in frame_map.items():
-            self.show_frames(frame_type, frames)
+            self.show_frames(frame_type, frames, reference_image)
 
-    def show_frames(self, frame_type: FrameType, frames: list[AstroImage]) -> None:
+    def show_frames(self, frame_type: FrameType, frames: list[AstroImage], reference_image: AstroImage | None = None) -> None:
+        if reference_image is None:
+            reference_image = self._current_reference_image
         self._frames[frame_type] = frames
         table = self._tables[frame_type]
         table.blockSignals(True)
@@ -138,7 +142,13 @@ class FrameTable(QWidget):
             enabled.setData(Qt.ItemDataRole.UserRole, row)
             table.setItem(row, 0, enabled)
 
-            prefix = "★ " if image.info.is_master else ""
+            if reference_image is image:
+                prefix = "⭐ "
+            elif image.info.is_master:
+                prefix = "★ "
+            else:
+                prefix = ""
+            
             table.setItem(row, 1, QTableWidgetItem(prefix + image.info.path.name))
             table.setItem(row, 2, self._item(self._datetime(image), self._datetime(image)))
             table.setItem(row, 3, self._item(str(image.info.iso) if image.info.iso else "—", image.info.iso))
@@ -222,9 +232,11 @@ class FrameTable(QWidget):
             image.info.enabled = checked
             self.enabled_changed.emit(image, checked)
 
+
     def _set_all(self, frame_type: FrameType, enabled: bool) -> None:
         for image in self._frames[frame_type]:
             image.info.enabled = enabled
+            
         self.show_frames(frame_type, self._frames[frame_type])
 
     def _selected_source_rows(self, frame_type: FrameType) -> list[int]:

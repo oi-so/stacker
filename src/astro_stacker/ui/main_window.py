@@ -231,8 +231,12 @@ class MainWindow(QMainWindow):
         self.frame_table.removed.connect(self.controller.remove_frames)
         self.frame_table.selection_cleared.connect(self.viewer.set_image(None))
 
-        self.controller.project.on_reference_image_changed = self.project_tree.update_reference_image_display
-        self.project_tree.update_reference_image_display(self.controller.project.reference_image)
+        def on_reference_changed(image):
+            self.project_tree.update_reference_image_display(image)
+            self._refresh_tables()
+
+        self.controller.project.on_reference_image_changed = on_reference_changed
+        on_reference_changed(self.controller.project.reference_image)
 
     def _install_logging(self):
         handler = QtLogHandler()
@@ -255,7 +259,7 @@ class MainWindow(QMainWindow):
             self._update_actions()
 
     def _refresh_tables(self):
-        self.frame_table.set_frames(self.controller.frame_map())
+        self.frame_table.set_frames(self.controller.frame_map(), self.controller.project.reference_image)
 
     def _preview_frame(self, image):
         if image is None:
@@ -356,8 +360,12 @@ class MainWindow(QMainWindow):
     def _reset_project(self):
         self.controller.reset()
 
-        self.controller.project.on_reference_image_changed = self.project_tree.update_reference_image_display
-        self.project_tree.update_reference_image_display(None)
+        def on_reference_changed(image):
+            self.project_tree.update_reference_image_display(image)
+            self._refresh_tables()
+
+        self.controller.project.on_reference_image_changed = on_reference_changed
+        on_reference_changed(None)
 
         self.manager.unload_all()
         self.viewer.set_image(None)
