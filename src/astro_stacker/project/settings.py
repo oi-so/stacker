@@ -15,12 +15,17 @@ class AlignmentMode(StrEnum):
     ALL = "all"
     NEW_ONLY = "new_only"
 
+class ReferenceMode(StrEnum):
+    MIDDLE = "middle"
+    BEST = "best"
+    MANUAL = "manual"
+
 
 @dataclass
 class AlignmentSettings:
     max_stars: int = 500
     sigma: float = 5.0
-    reference_mode: str = "middle"
+    reference_mode: ReferenceMode = ReferenceMode.MIDDLE
     calibrate_before_align: bool = True
     mode: AlignmentMode = AlignmentMode.ALL
 

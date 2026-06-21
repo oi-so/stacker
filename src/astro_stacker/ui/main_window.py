@@ -302,7 +302,7 @@ class MainWindow(QMainWindow):
         worker = PipelineWorker(func)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.failed.connect(lambda exc: ErrorDialog.show_exception(self, "処理エラー", exc))
+        # worker.failed.connect(lambda exc: ErrorDialog.show_exception(self, "処理エラー", exc))
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         worker.progress.connect(self._update_progress)

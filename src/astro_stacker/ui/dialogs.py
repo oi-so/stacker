@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project.project import Project
-from ..project.settings import AlignmentMode
+from ..project.settings import AlignmentMode, ReferenceMode
 
 
 class AlignmentSettingsDialog(QDialog):
@@ -76,9 +76,21 @@ class AlignmentSettingsDialog(QDialog):
         layout.addRow("位置合わせ対象", mode_box)
 
         self.reference = QComboBox()
-        self.reference.addItems(["自動=中央", "自動=最高品質", "手動選択"])
+        self.reference.addItems(["自動（中央）", "自動（最高品質）", "手動選択"])
         self.reference.setCurrentIndex(self.settings.value("alignment/reference", 0, int))
+
+        self.manual_reference = QComboBox()
+        for frame in project.light_frames:
+            if not frame.info.enabled: continue
+            self.manual_reference.addItem(
+                frame.info.path.name,
+                frame
+            )
+        self.manual_reference.setEnabled(False)
+        self.reference.currentIndexChanged.connect(self._update_reference_widgets)
+
         layout.addRow("参照画像", self.reference)
+        layout.addRow("手動参照画像", self.manual_reference)
 
         self.sigma = QDoubleSpinBox()
         self.sigma.setRange(3.0, 10.0)
@@ -96,11 +108,18 @@ class AlignmentSettingsDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _update_reference_widgets(self):
+        manual = (self.reference.currentIndex() == 2)
+        self.manual_reference.setEnabled(manual)
+
     def accept(self) -> None:
         alignment = self.project.settings.alignment
         calibration = self.project.settings.calibration
         alignment.calibrate_before_align = self.timing.currentIndex() == 0
-        alignment.reference_mode = ["middle", "best", "manual"][self.reference.currentIndex()]
+        modes = [ReferenceMode.MIDDLE, ReferenceMode.BEST, ReferenceMode.MANUAL]
+        alignment.reference_mode = (modes[self.reference.currentIndex()])
+        if alignment.reference_mode == ReferenceMode.MANUAL:
+            self.project.reference_image = self.manual_reference.currentData()
         alignment.sigma = self.sigma.value()
         alignment.max_stars = self.max_stars.value()
         calibration.use_darks = self.use_dark.isChecked()
