@@ -69,6 +69,7 @@ class FrameTable(QWidget):
     enabled_changed = Signal(object, bool)
     removed = Signal(object, object)
     selection_cleared = Signal(object)
+    reference_image_requested = Signal(object)
 
     HEADERS = ["使用", "ファイル名", "日時", "ISO", "SS", "F値", "スコア"]
 
@@ -272,6 +273,12 @@ class FrameTable(QWidget):
         table = self._tables[frame_type]
         menu = QMenu(self)
 
+        selected_images = self._selected_images(frame_type)
+        set_reference_action = None
+        if len(selected_images) == 1:
+            set_reference_action = menu.addAction("⭐ このフレームを基準画像に設定")
+            menu.addSeparator()
+
         enable_action = menu.addAction("選択フレームを使用")
         disable_action = menu.addAction("選択フレームを無効化")
         menu.addSeparator()
@@ -279,7 +286,9 @@ class FrameTable(QWidget):
 
         action = menu.exec(table.viewport().mapToGlobal(pos))
 
-        if action == enable_action:
+        if action == set_reference_action and set_reference_action is not None:
+            self.reference_image_requested.emit(selected_images[0])
+        elif action == enable_action:
             self._set_selected_enabled(frame_type, True)
         elif action == disable_action:
             self._set_selected_enabled(frame_type, False)

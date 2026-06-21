@@ -230,6 +230,7 @@ class MainWindow(QMainWindow):
         self.frame_table.enabled_changed.connect(lambda *_: self._update_actions())
         self.frame_table.removed.connect(self.controller.remove_frames)
         self.frame_table.selection_cleared.connect(self.viewer.set_image(None))
+        self.frame_table.reference_image_requested.connect(self.controller.project.set_reference_image)
 
         def on_reference_changed(image):
             self.project_tree.update_reference_image_display(image)

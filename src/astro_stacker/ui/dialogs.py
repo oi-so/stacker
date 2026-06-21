@@ -89,6 +89,16 @@ class AlignmentSettingsDialog(QDialog):
         self.manual_reference.setEnabled(False)
         self.reference.currentIndexChanged.connect(self._update_reference_widgets)
 
+        if project.reference_image and project.reference_image.info.enabled:
+            self.reference.setCurrentIndex(2)
+            index = self.manual_reference.findData(project.reference_image)
+            if index >= 0:
+                self.manual_reference.setCurrentIndex(index)
+        elif not project.reference_image.info.enabled:
+            if self.settings.value("alignment/reference", 0, int) == 2:
+                self.reference.setCurrentIndex(0)
+
+
         layout.addRow("参照画像", self.reference)
         layout.addRow("手動参照画像", self.manual_reference)
 
