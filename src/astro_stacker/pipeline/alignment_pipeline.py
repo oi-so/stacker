@@ -41,15 +41,19 @@ class AlignmentPipeline:
         reference_catalog.stars = reference_catalog.brightest(settings.max_stars)
         
         
+        is_finished_astro_image = False
         for i, astro_image in enumerate(light_frames, 2):
-            if is_cancelled and is_cancelled(): return
-            if progress:
-                progress("位置合わせ", i, total, project.reference_image.info.path.name)
-
             if astro_image is reference:
                 astro_image.info.transform = TransformData()
                 astro_image.info.alignment_data = AlignmentData()
+                is_finished_astro_image = True
                 continue
+
+            if is_cancelled and is_cancelled(): return
+            if progress:
+                finished_frame_count = i - (1 if is_finished_astro_image else 0)
+                progress("位置合わせ", finished_frame_count, total, astro_image.info.path.name)
+
 
             image = self.provider.get_image(astro_image)
             catalog = detect_stars(image, sigma=settings.sigma)
