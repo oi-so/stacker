@@ -119,7 +119,7 @@ class AlignmentSettingsDialog(QDialog):
         modes = [ReferenceMode.MIDDLE, ReferenceMode.BEST, ReferenceMode.MANUAL]
         alignment.reference_mode = (modes[self.reference.currentIndex()])
         if alignment.reference_mode == ReferenceMode.MANUAL:
-            self.project.reference_image = self.manual_reference.currentData()
+            self.project.set_reference_image(self.manual_reference.currentData())
         alignment.sigma = self.sigma.value()
         alignment.max_stars = self.max_stars.value()
         calibration.use_darks = self.use_dark.isChecked()

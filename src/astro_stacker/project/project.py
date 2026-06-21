@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 from datetime import datetime
 import uuid
+from typing import Callable
 
 from ..io.image_data import AstroImage
 from ..project.settings import StackingSettings, AlignmentSettings, CalibrationSettings, DebayerTiming
@@ -83,6 +84,8 @@ class Project:
     alignment_sessions: dict[str, AlignmentSession] = field(default_factory=dict)
     current_alignment_session_id: str | None = None
 
+    on_reference_image_changed: Callable[[AstroImage | None], None] | None = field(default=None, repr=False, compare=False)
+
     def make_alignment_signature(self) -> AlignmentSignature:
         return AlignmentSignature(
             enabled_paths=frozenset(
@@ -142,3 +145,13 @@ class Project:
             for f in frames
             if f.info.alignment_session_id is not None
         }
+
+
+    def set_reference_image(self, image: AstroImage | None):
+        if self.reference_image is image:
+            return
+
+        self.reference_image = image
+
+        if self.on_reference_image_changed:
+            self.on_reference_image_changed(image)

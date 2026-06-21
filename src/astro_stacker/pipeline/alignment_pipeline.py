@@ -26,7 +26,7 @@ class AlignmentPipeline:
             raise ValueError("No enabled light frames")
 
         if settings.reference_mode == ReferenceMode.MIDDLE:
-            project.reference_image = (
+            project.set_reference_image(
                 enabled_frames[
                     len(enabled_frames) // 2
                 ]
@@ -103,9 +103,9 @@ class AlignmentPipeline:
         reference.info.alignment_session_id = session_id
         reference.info.transform = TransformData()
         reference.info.alignment_data = AlignmentData()
-        reference_image = self.provider.get_image(reference)
+        project.set_reference_image(reference)
 
-        reference_catalog = detect_stars(reference_image, sigma=settings.sigma,)
+        reference_catalog = detect_stars(self.provider.get_image(reference), sigma=settings.sigma)
 
         reference_catalog.stars = (
             reference_catalog.brightest(

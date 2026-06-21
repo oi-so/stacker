@@ -231,6 +231,9 @@ class MainWindow(QMainWindow):
         self.frame_table.removed.connect(self.controller.remove_frames)
         self.frame_table.selection_cleared.connect(self.viewer.set_image(None))
 
+        self.controller.project.on_reference_image_changed = self.project_tree.update_reference_image_display
+        self.project_tree.update_reference_image_display(self.controller.project.reference_image)
+
     def _install_logging(self):
         handler = QtLogHandler()
         handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
@@ -352,6 +355,10 @@ class MainWindow(QMainWindow):
 
     def _reset_project(self):
         self.controller.reset()
+
+        self.controller.project.on_reference_image_changed = self.project_tree.update_reference_image_display
+        self.project_tree.update_reference_image_display(None)
+
         self.manager.unload_all()
         self.viewer.set_image(None)
         self._aligned = False
