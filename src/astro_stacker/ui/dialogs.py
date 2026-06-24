@@ -154,7 +154,7 @@ class AlignmentSettingsDialog(QDialog):
 
 
 class StackingSettingsDialog(QDialog):
-    def __init__(self, project: Project, parent=None):
+    def __init__(self, project: Project, parent=None, use_aligned_image: bool | None = None):
         super().__init__(parent)
         self.project = project
         self.settings = QSettings("AstroStacker", "AstroStacker")
@@ -180,10 +180,17 @@ class StackingSettingsDialog(QDialog):
         self.not_use_alignment_btn = QRadioButton("アライメント前画像を使う")
         self.alignment_group.addButton(self.use_alignment_btn)
         self.alignment_group.addButton(self.not_use_alignment_btn)
-        if use_alignment:
-            self.use_alignment_btn.setChecked(True)
+        if use_aligned_image is None:
+            if use_alignment:
+                self.use_alignment_btn.setChecked(True)
+            else:
+                self.not_use_alignment_btn.setChecked(True)
         else:
-            self.not_use_alignment_btn.setChecked(True)
+            if use_aligned_image:
+                self.use_alignment_btn.setChecked(True)
+            else:
+                self.not_use_alignment_btn.setChecked(True)
+
         alignment_mode_layout.addWidget(self.use_alignment_btn)
         alignment_mode_layout.addWidget(self.not_use_alignment_btn)
         layout.addRow(alignment_mode_box)

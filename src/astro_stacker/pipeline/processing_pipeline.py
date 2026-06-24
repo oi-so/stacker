@@ -189,7 +189,7 @@ class ProcessingPipeline:
         project.output_path = path
         logger.info("Auto-saved stacked result: %s", path)
 
-    def run(self, project: Project, progress=None, is_cancelled=None) -> None:
+    def run(self, project: Project, progress=None, is_cancelled=None, skip_alignment = False) -> None:
         project.light_frames = [
             frame for frame in project.light_frames
             if (frame.info.exif or {}).get("FRAMTYP") != "stacked_light"
@@ -222,12 +222,15 @@ class ProcessingPipeline:
         if calibrate_before_align:
             provider = CalibratedFrameProvider(provider, calibrator)
 
-        if not project.is_alignment_valid():
+        if not skip_alignment and not project.is_alignment_valid():
             logger.info("Starting alignment")
             alignment_pipeline = AlignmentPipeline(provider)
             alignment_pipeline.run(project, project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
         else:
-            logger.info("Using existing alignment")
+            if skip_alignment:
+                logger.info("Skipping alignment")
+            else:
+                logger.info("Using existing alignment")
 
         if is_cancelled and is_cancelled(): return
 

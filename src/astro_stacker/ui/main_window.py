@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QTabWidget,
     QHBoxLayout,
+    QMessageBox,
 )
 
 from ..core.provider import ImageManagerProvider
@@ -24,6 +25,7 @@ from ..io.image_manager import ImageManager
 from ..io.saver import save_image
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.processing_pipeline import ProcessingPipeline
+from ..pipeline.stacking_pipeline import StackingPipeline
 from .constants import FrameType
 from .controllers.project_controller import ProjectController
 from .dialogs import (
@@ -170,7 +172,7 @@ class MainWindow(QMainWindow):
             lambda: self._on_add_frames(self.frame_table.current_frame_type())
         )
         self.align_action.triggered.connect(self._run_alignment)
-        self.stack_action.triggered.connect(self._run_stacking)
+        self.stack_action.triggered.connect(self._on_stack)
         self.save_action.triggered.connect(self._save_result)
         self.reset_action.triggered.connect(self._reset_project)
 
@@ -280,8 +282,15 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             ErrorDialog.show_exception(self, "画像表示エラー", exc)
 
+
+    def _show_stack_dialog(self, use_aligned_image: bool | None = None) -> bool:
+        return (StackingSettingsDialog(self.controller.project, self, use_aligned_image=use_aligned_image).exec() == StackingSettingsDialog.DialogCode.Accepted)
+    
+    def _show_alignment_dialog(self) -> bool:
+        return (AlignmentSettingsDialog(self.controller.project, self).exec() == AlignmentSettingsDialog.DialogCode.Accepted)
+
     def _run_alignment(self):
-        if AlignmentSettingsDialog(self.controller.project, self).exec() != AlignmentSettingsDialog.DialogCode.Accepted:
+        if not self._show_alignment_dialog():
             return
 
         def work(progress, is_cancelled):
@@ -291,7 +300,7 @@ class MainWindow(QMainWindow):
         self._run_worker(work, on_success=self._alignment_finished)
 
     def _run_stacking(self):
-        if StackingSettingsDialog(self.controller.project, self).exec() != StackingSettingsDialog.DialogCode.Accepted:
+        if not self._show_stack_dialog():
             return
 
         def work(progress, is_cancelled):
@@ -414,3 +423,72 @@ class MainWindow(QMainWindow):
         self.progress_label.setText(
             f"{phase} ({current}/{total}) : {message}"
         )
+
+    def _show_unaligned_warning(self):
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("未位置合わせ")
+        box.setText(
+            "現在のライトフレームは位置合わせされていません。\n\n"
+            "比較明合成や固定撮影の星景写真では、そのままスタックできます。"
+        )
+
+        stack_btn = box.addButton(
+            "そのままスタック",
+            QMessageBox.ButtonRole.AcceptRole
+        )
+        align_btn = box.addButton(
+            "位置合わせしてスタック",
+            QMessageBox.ButtonRole.ActionRole
+        )
+        cancel_btn = box.addButton(
+            QMessageBox.StandardButton.Cancel
+        )
+
+        box.exec()
+
+        clicked = box.clickedButton()
+
+        if clicked is cancel_btn:
+            return
+
+        if clicked is stack_btn:
+            if not self._show_stack_dialog(use_aligned_image=False):
+                return
+
+            def work(progress, is_cancelled):
+                ProcessingPipeline(self.manager).run(
+                    self.controller.project,
+                    progress=progress,
+                    is_cancelled=is_cancelled,
+                    skip_alignment=True,
+                )
+
+            self._run_worker(
+                work,
+                on_success=self._stacking_finished,
+            )
+            return
+
+        if clicked is align_btn:
+            if not self._show_alignment_dialog(): return
+            if not self._show_stack_dialog(use_aligned_image=True): return
+
+            def work(progress, is_cancelled):
+                ProcessingPipeline(self.manager).run(
+                    self.controller.project,
+                    progress=progress,
+                    is_cancelled=is_cancelled,
+                )
+
+            self._run_worker(
+                work,
+                on_success=self._stacking_finished,
+            )
+
+
+    def _on_stack(self):
+        if self.controller.project.is_alignment_valid():
+            self._run_stacking()
+        else:
+            self._show_unaligned_warning()
