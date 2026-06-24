@@ -10,9 +10,11 @@ class StackingPipeline:
         self.provider = provider
 
     def run(self, project: Project, settings: StackingSettings, progress=None, is_cancelled=None) -> None:
-        aligned_provider = AlignedFrameProvider(self.provider, ImageTransformer())
+        provider = self.provider
+        if project.settings.use_alignment:
+            provider = AlignedFrameProvider(provider, ImageTransformer())
 
-        combiner = ImageCombiner(aligned_provider)
+        combiner = ImageCombiner(provider)
 
         result = combiner.combine(
             project.light_frames,

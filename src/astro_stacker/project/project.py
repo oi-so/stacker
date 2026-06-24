@@ -13,6 +13,7 @@ from ..project.settings import StackingSettings, AlignmentSettings, CalibrationS
 class ProjectSettings:
     calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
     alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
+    use_alignment: bool = True
     debayer_timing: DebayerTiming = DebayerTiming.BEFORE_STACK
 
     light_frame: StackingSettings = field(default_factory=StackingSettings)
@@ -105,10 +106,10 @@ class Project:
         )
 
     def is_alignment_valid(self) -> bool:
-        return (
-            self.alignment_signature
-            == self.make_alignment_signature()
-        )
+        if (self.alignment_signature != self.make_alignment_signature()):
+            return False
+        sessions = self.get_alignment_sessions()
+        return (len(sessions) == 1 and None not in sessions)
     
 
     def create_alignment_session(self) -> str:

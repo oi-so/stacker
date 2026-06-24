@@ -20,7 +20,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QTextEdit,
     QRadioButton,
-    QVBoxLayout
+    QVBoxLayout,
+    QButtonGroup
 )
 
 from ..project.project import Project
@@ -166,6 +167,28 @@ class StackingSettingsDialog(QDialog):
         self.method.setCurrentIndex(methods.index(current) if current in methods else 0)
         layout.addRow("スタック方法", self.method)
 
+
+        use_alignment = self.settings.value(
+            "stacking/use_alignment",
+            project.settings.use_alignment,
+            type=bool,
+        )
+        alignment_mode_box = QGroupBox("使用する画像")
+        alignment_mode_layout = QVBoxLayout(alignment_mode_box)
+        self.alignment_group = QButtonGroup(self)
+        self.use_alignment_btn = QRadioButton("アライメント後画像を使う")
+        self.not_use_alignment_btn = QRadioButton("アライメント前画像を使う")
+        self.alignment_group.addButton(self.use_alignment_btn)
+        self.alignment_group.addButton(self.not_use_alignment_btn)
+        if use_alignment:
+            self.use_alignment_btn.setChecked(True)
+        else:
+            self.not_use_alignment_btn.setChecked(True)
+        alignment_mode_layout.addWidget(self.use_alignment_btn)
+        alignment_mode_layout.addWidget(self.not_use_alignment_btn)
+        layout.addRow(alignment_mode_box)
+
+
         self.sigma = QDoubleSpinBox()
         self.sigma.setRange(0.5, 10.0)
         self.sigma.setValue(self.settings.value("stacking/sigma", 3.0, float))
@@ -188,6 +211,8 @@ class StackingSettingsDialog(QDialog):
         self.settings.setValue("stacking/method", self.project.settings.light_frame.method)
         self.settings.setValue("stacking/sigma", self.sigma.value())
         self.settings.setValue("stacking/iterations", self.iterations.value())
+        self.project.settings.use_alignment = self.use_alignment_btn.isChecked()
+        self.settings.setValue("stacking/use_alignment", self.use_alignment_btn.isChecked())
         super().accept()
 
 
