@@ -4,6 +4,7 @@ import numpy as np
 from ..io.image_data import ScoreData
 from .detector import detect_stars
 from .fwhm import measure_fwhm
+from ..stars.star_data import StarCatalog
 from astropy.stats import sigma_clipped_stats
 
 
@@ -29,7 +30,12 @@ class QualityAnalyzer:
         Returns:
             ScoreData with quality metrics
         """
+        
         catalog = detect_stars(image)
+        return self.analyze_catalog(image, catalog, use_star_count_max)
+        
+    
+    def analyze_catalog(self, image: np.ndarray, catalog: StarCatalog, use_star_count_max: int = 50):
         star_count = len(catalog.stars)
         top_catalog = catalog.brightest(use_star_count_max)
         
