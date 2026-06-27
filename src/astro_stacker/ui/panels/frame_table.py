@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from fractions import Fraction
+from enum import IntEnum
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -20,7 +21,23 @@ from PySide6.QtGui import QKeyEvent
 from ..constants import FrameType
 from ...io.image_data import AstroImage
 
-
+class Column(IntEnum):
+    ENABLED = 0
+    FILENAME = 1
+    DATETIME = 2
+    RESOLUTION = 3
+    EXPOSURE = 4
+    ISO = 5
+    FNUMBER = 6
+    STAR_COUNT = 7
+    FWHM = 8
+    ELLIPTICITY = 9
+    BACKGROUND = 10
+    SCORE = 11
+    DX = 12
+    DY = 13
+    ROTATION = 14
+    SCALE = 15
 
 class FrameQTableWidget(QTableWidget):
     space_pressed = Signal()
@@ -71,7 +88,24 @@ class FrameTable(QWidget):
     selection_cleared = Signal(object)
     reference_image_requested = Signal(object)
 
-    HEADERS = ["使用", "ファイル名", "日時", "ISO", "SS", "F値", "スコア"]
+    HEADERS = {
+        Column.ENABLED: "使用",
+        Column.FILENAME: "ファイル名",
+        Column.DATETIME: "日時",
+        Column.RESOLUTION: "画素数",
+        Column.EXPOSURE: "SS",
+        Column.ISO: "ISO",
+        Column.FNUMBER: "F値",
+        Column.STAR_COUNT: "星数",
+        Column.FWHM: "FWHM",
+        Column.ELLIPTICITY: "楕円率",
+        Column.BACKGROUND: "背景",
+        Column.SCORE: "スコア",
+        Column.DX: "dx",
+        Column.DY: "dy",
+        Column.ROTATION: "rotate",
+        Column.SCALE: "scale",
+    }
 
     def __init__(self):
         super().__init__()
@@ -99,7 +133,7 @@ class FrameTable(QWidget):
             page_layout.addLayout(buttons)
 
             table = FrameQTableWidget(0, len(self.HEADERS))
-            table.setHorizontalHeaderLabels(self.HEADERS)
+            table.setHorizontalHeaderLabels([self.HEADERS[col] for col in Column])
             table.setSortingEnabled(True)
             table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
             table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -137,29 +171,100 @@ class FrameTable(QWidget):
         table.setSortingEnabled(False)
         table.setRowCount(len(frames))
         for row, image in enumerate(frames):
+            info = image.info
+            score_data = info.score_data
+            transform = info.transform
+
             enabled = QTableWidgetItem()
             enabled.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-            enabled.setCheckState(Qt.CheckState.Checked if image.info.enabled else Qt.CheckState.Unchecked)
+            enabled.setCheckState(Qt.CheckState.Checked if info.enabled else Qt.CheckState.Unchecked)
             enabled.setData(Qt.ItemDataRole.UserRole, row)
-            table.setItem(row, 0, enabled)
+            table.setItem(row, Column.ENABLED, enabled)
 
             if reference_image is image:
                 prefix = "⭐ "
-            elif image.info.is_master:
+            elif info.is_master:
                 prefix = "★ "
             else:
                 prefix = ""
             
-            table.setItem(row, 1, QTableWidgetItem(prefix + image.info.path.name))
-            table.setItem(row, 2, self._item(self._datetime(image), self._datetime(image)))
-            table.setItem(row, 3, self._item(str(image.info.iso) if image.info.iso else "—", image.info.iso))
-            table.setItem(row, 4, self._item(self._exposure(image), image.info.exposure_time))
-            table.setItem(row, 5, self._item(f"F{image.info.f_number:g}" if image.info.f_number else "—", image.info.f_number))
-            score = image.info.score_data.score
-            table.setItem(row, 6, self._item(f"{score:.2f}" if score is not None else "—", score))
+            table.setItem(row, Column.FILENAME, QTableWidgetItem(prefix + info.path.name))
+
+            # 日時
+            dt = self._datetime(image)
+            table.setItem(row, Column.DATETIME, self._item(dt, dt))
+
+            # 画素数
+            shape = info.shape
+            if info.shape:
+                resolution = f"{shape.width}×{shape.height}"
+                pixels = shape.width * shape.height
+            else:
+                resolution = "-"
+                pixels = None
+            table.setItem(row, Column.RESOLUTION, self._item(resolution, pixels))
+
+            # SS
+            table.setItem(row, Column.EXPOSURE, self._item(self._exposure(image), info.exposure_time))
+
+            # ISO
+            table.setItem(row, Column.ISO, self._item(str(info.iso) if info.iso is not None else "-", info.iso))
+
+            # F値
+            table.setItem(row, Column.FNUMBER, self._item(
+                f"F{info.f_number:g}" if info.f_number is not None else "-", info.f_number
+            ))
+
+            # 星数
+            star_count = score_data.star_count
+            table.setItem(row, Column.STAR_COUNT, self._item(
+                str(star_count) if star_count is not None else "-", star_count
+            ))
+
+            # FWHM
+            fwhm = score_data.fwhm
+            table.setItem(row, Column.FWHM, self._item( 
+                f"{fwhm:.2f}" if fwhm is not None else "-", fwhm
+            ))
+
+            # 楕円率
+            ellipticity = score_data.ellipticity
+            table.setItem(row, Column.ELLIPTICITY, self._item(
+                f"{ellipticity:.3f}" if ellipticity is not None else "-", ellipticity
+            ))
+
+            # 背景
+            background = score_data.background_noise
+            table.setItem(row, Column.BACKGROUND, 
+                self._item(f"{background:.2f}" if background is not None else "-", background
+            ))
+
+            # スコア
+            score = score_data.score
+            table.setItem(row, Column.SCORE, self._item(
+                f"{score:.2f}" if score is not None else "-", score
+            ))
+
+            if info.alignment_session_id is None:
+                table.setItem(row, Column.DX, self._item("-"))
+                table.setItem(row, Column.DY, self._item("-"))
+                table.setItem(row, Column.ROTATION, self._item("-"))
+                table.setItem(row, Column.SCALE, self._item("-"))
+            else:
+                dx = transform.dx
+                dy = transform.dy
+                rotation = transform.rotation
+                scale = transform.scale
+
+                table.setItem(row, Column.DX, self._item(f"{dx:.2f}", dx))
+                table.setItem(row, Column.DY, self._item(f"{dy:.2f}", dy))
+                table.setItem(row, Column.ROTATION, self._item(f"{rotation:.3f}", rotation))
+                table.setItem(row, Column.SCALE, self._item(f"{scale:.5f}", scale))
+
         table.setSortingEnabled(True)
         table.resizeColumnsToContents()
         table.blockSignals(False)
+
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
@@ -177,12 +282,12 @@ class FrameTable(QWidget):
 
     def _datetime(self, image: AstroImage) -> str:
         exif = image.info.exif or {}
-        return str(exif.get("EXIF DateTimeOriginal") or exif.get("DATE-OBS") or "—")
+        return str(exif.get("EXIF DateTimeOriginal") or exif.get("DATE-OBS") or "-")
 
     def _exposure(self, image: AstroImage) -> str:
         value = image.info.exposure_time
         if value is None:
-            return "—"
+            return "-"
         if value < 1:
             return str(Fraction(value).limit_denominator(8000))
         return f"{value:g}s"
