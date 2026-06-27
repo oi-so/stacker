@@ -4,6 +4,7 @@ from ..project.settings import AlignmentSettings, AlignmentMode, ReferenceMode
 from ..stars.detector import detect_stars
 from ..alignment.aligner import align_catalogs
 from ..io.image_data import TransformData, AlignmentData
+from ..stars.quality import QualityAnalyzer
 import logging
 
 logger = logging.getLogger(__name__)
@@ -99,19 +100,24 @@ class AlignmentPipeline:
 
         if is_cancelled and is_cancelled():
             return
+        
+        analyzer = QualityAnalyzer()
 
         reference.info.alignment_session_id = session_id
         reference.info.transform = TransformData()
         reference.info.alignment_data = AlignmentData()
         project.set_reference_image(reference)
 
-        reference_catalog = detect_stars(self.provider.get_image(reference), sigma=settings.sigma)
+        reference_image = self.provider.get_image(reference)
+        reference_catalog = detect_stars(reference_image, sigma=settings.sigma)
 
         reference_catalog.stars = (
-            reference_catalog.brightest(
-                settings.max_stars
-            )
+            reference_catalog.brightest(settings.max_stars)
         )
+        try:
+            reference.info.score_data = analyzer.analyze_catalog(reference_image, reference_catalog)
+        except Exception:
+            logger.exception(f"Quality analysis failed: reference_image {reference.info.path.name}")
 
         for astro_image in frames_to_align:
             if astro_image is reference:
@@ -126,7 +132,11 @@ class AlignmentPipeline:
 
             image = self.provider.get_image(astro_image)
             catalog = detect_stars(image, sigma=settings.sigma)
-            catalog.stars = (catalog.brightest(settings.max_stars))
+            catalog.stars = catalog.brightest(settings.max_stars)
+            try:
+                astro_image.info.score_data = analyzer.analyze_catalog(image, catalog)
+            except Exception:
+                logger.exception(f"Quality analysis failed: {astro_image.info.path.name}")
             result = align_catalogs(reference_catalog, catalog)
             astro_image.info.transform = (result.transform)
             astro_image.info.alignment_data = (result.info)
