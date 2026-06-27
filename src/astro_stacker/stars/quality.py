@@ -20,24 +20,9 @@ class QualityAnalyzer:
     Formula: score = star_count / (fwhm + 1e-6)
     """
     
-    def analyze(self, image: np.ndarray, use_star_count_max: int = 50) -> ScoreData:
-        """Analyze image quality.
-        
-        Args:
-            image: Input image array
-            use_star_count_max: Maximum number of stars to measure FWHM for
-            
-        Returns:
-            ScoreData with quality metrics
-        """
-        
-        catalog = detect_stars(image)
-        return self.analyze_catalog(image, catalog, use_star_count_max)
-        
-    
-    def analyze_catalog(self, image: np.ndarray, catalog: StarCatalog, use_star_count_max: int = 50):
+    def analyze_catalog(self, image: np.ndarray, catalog: StarCatalog, use_star_count_max: int):
         star_count = len(catalog.stars)
-        top_catalog = catalog.brightest(use_star_count_max)
+        top_catalog = catalog.brightest(use_star_count_max).stars
 
         # Measure FWHM for brightest stars
         fwhms = np.array([measure_fwhm(image, c) for c in top_catalog], dtype=object)
