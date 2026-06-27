@@ -38,7 +38,7 @@ class QualityAnalyzer:
     def analyze_catalog(self, image: np.ndarray, catalog: StarCatalog, use_star_count_max: int = 50):
         star_count = len(catalog.stars)
         top_catalog = catalog.brightest(use_star_count_max)
-        
+
         # Measure FWHM for brightest stars
         fwhms = np.array([measure_fwhm(image, c) for c in top_catalog], dtype=object)
         # Filter out None values
@@ -50,9 +50,22 @@ class QualityAnalyzer:
         # Quality score: more stars and smaller FWHM = higher score
         score = star_count / (median_fwhm + 1e-6)
 
+        ellipticities = [
+            s.ellipticity
+            for s in top_catalog
+            if s.ellipticity is not None
+        ]
+
+        median_ellipticity = (
+            float(np.median(ellipticities))
+            if ellipticities
+            else None
+        )
+
         return ScoreData(
             score=score,
             star_count=star_count,
             fwhm=median_fwhm,
+            ellipticity=median_ellipticity,
             background_noise=float(background_noise)
         )

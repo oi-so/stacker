@@ -52,6 +52,9 @@ def measure_fwhm(
         Uses 2D Gaussian fitting on a small cutout. Returns None if
         cutout is too small or fitting fails.
     """
+    if image.ndim == 3:
+        image = image[..., 0]
+
     x = int(star.x)
     y = int(star.y)
 
@@ -84,7 +87,8 @@ def measure_fwhm(
             gaussian_2d,
             (xx, yy),
             cutout.ravel(),
-            p0=p0
+            p0=p0,
+            maxfev=100,
         )
 
         sigma = abs(popt[3])

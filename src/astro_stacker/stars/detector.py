@@ -54,7 +54,9 @@ def detect_stars(image: np.ndarray, fwhm: float = 4.0, sigma: float = 5.0) -> St
                 flux=float(row["flux"]),
                 peak=float(row["peak"]),
                 sharpness=float(row["sharpness"]),
-                roundness=float(row["roundness1"])
+                roundness=float(row["roundness1"]),
+                # TODO: 仮の楕円率
+                ellipticity=abs(float(row["roundness1"])),
             )
         )
 
