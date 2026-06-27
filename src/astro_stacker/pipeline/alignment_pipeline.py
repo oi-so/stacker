@@ -137,7 +137,14 @@ class AlignmentPipeline:
                 astro_image.info.score_data = analyzer.analyze_catalog(image, catalog)
             except Exception:
                 logger.exception(f"Quality analysis failed: {astro_image.info.path.name}")
-            result = align_catalogs(reference_catalog, catalog)
+
+            result = None
+            try:
+                result = align_catalogs(reference_catalog, catalog)
+            except Exception:
+                logger.exception(f"Align analysis failed: {astro_image.info.path.name}")
+
+            if result is None: continue
             astro_image.info.transform = (result.transform)
             astro_image.info.alignment_data = (result.info)
             astro_image.info.alignment_session_id = (session_id)
