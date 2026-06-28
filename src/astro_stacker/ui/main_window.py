@@ -337,6 +337,7 @@ class MainWindow(QMainWindow):
             AlignmentPipeline(provider).run(self.controller.project, self.controller.project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
 
         self._run_worker(work, on_success=self._alignment_finished)
+        self.viewer.viewport().update()
 
     def _run_stacking(self):
         if not self._show_stack_dialog():
