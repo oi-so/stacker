@@ -22,12 +22,11 @@ from PySide6.QtWidgets import (
     QComboBox,
 )
 
-from ..core.provider import ImageManagerProvider
+from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
 from ..io.image_manager import ImageManager
 from ..io.saver import save_image
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.processing_pipeline import ProcessingPipeline
-from ..pipeline.stacking_pipeline import StackingPipeline
 from .constants import FrameType
 from .controllers.project_controller import ProjectController
 from .dialogs import (
@@ -42,7 +41,6 @@ from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel, QtLogHandler
 from .panels.project_tree import ProjectTree
 from .viewer.image_viewer import ImageViewer
-from ..core.debayer import debayer
 from .viewer.image_viewer import StarDisplayMode
 
 logger = logging.getLogger(__name__)
@@ -86,6 +84,8 @@ class MainWindow(QMainWindow):
         self._worker: PipelineWorker | None = None
         self._aligned = False
         self._stacked = False
+        self.preview_provider = PreviewProvider(self.manager)
+        self.preview_settings = PreviewSettings()
 
         self.setWindowTitle("Astro Stacker")
         self.resize(1400, 900)
@@ -310,15 +310,8 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            nd_img = self.manager.get_image(image)
-            nd_img = (
-                nd_img[0::2, 0::2]
-                + nd_img[0::2, 1::2]
-                + nd_img[1::2, 0::2]
-                + nd_img[1::2, 1::2]
-            ) / 4
-            nd_img = debayer(nd_img, image.info.cfa_type)
-            self.viewer.set_image(nd_img, image.info.stars.all_stars, image.info.stars.alignment_stars, 0.5, 0.5)
+            preview = self.preview_provider.get_image(image, self.preview_settings)
+            self.viewer.set_image(preview.image, image.info.stars.all_stars, image.info.stars.alignment_stars, preview.scale_x, preview.scale_y)
         except Exception as exc:
             ErrorDialog.show_exception(self, "画像表示エラー", exc)
 

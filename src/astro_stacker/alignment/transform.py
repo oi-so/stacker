@@ -4,7 +4,7 @@ from skimage.transform import SimilarityTransform, warp
 import numpy as np
 
 from ..io.image_data import TransformData, AstroImage
-from ..core.provider import FrameProvider
+from ..core.frame_provider import FrameProvider
 
 
 

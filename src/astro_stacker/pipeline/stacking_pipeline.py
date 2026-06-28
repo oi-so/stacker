@@ -1,5 +1,5 @@
 from ..alignment.transform import AlignedFrameProvider, ImageTransformer
-from ..core.provider import FrameProvider
+from ..core.frame_provider import FrameProvider
 from ..stacking.combiner import ImageCombiner
 from ..project.project import Project
 from ..project.settings import StackingSettings

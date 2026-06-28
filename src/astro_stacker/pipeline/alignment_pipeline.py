@@ -1,4 +1,4 @@
-from ..core.provider import FrameProvider
+from ..core.frame_provider import FrameProvider
 from ..project.project import Project
 from ..project.settings import AlignmentSettings, AlignmentMode, ReferenceMode
 from ..stars.detector import detect_stars
