@@ -110,12 +110,12 @@ class AlignmentPipeline:
 
         reference_image = self.provider.get_image(reference)
         reference_catalog = detect_stars(reference_image, sigma=settings.sigma)
+        reference_alignment_catalog = reference_catalog.brightest(settings.max_stars)
+        reference.info.stars.all_stars = reference_catalog
+        reference.info.stars.alignment_stars = reference_alignment_catalog
 
-        reference_catalog.stars = (
-            reference_catalog.brightest(settings.max_stars)
-        )
         try:
-            reference.info.score_data = analyzer.analyze_catalog(reference_image, reference_catalog)
+            reference.info.score_data = analyzer.analyze_catalog(reference_image, reference_catalog, settings.max_stars)
         except Exception:
             logger.exception(f"Quality analysis failed: reference_image {reference.info.path.name}")
 
@@ -132,9 +132,11 @@ class AlignmentPipeline:
 
             image = self.provider.get_image(astro_image)
             catalog = detect_stars(image, sigma=settings.sigma)
-            catalog.stars = catalog.brightest(settings.max_stars)
+            alignment_catalog = catalog.brightest(settings.max_stars)
+            astro_image.info.stars.all_stars = catalog
+            astro_image.info.stars.alignment_stars = alignment_catalog
             try:
-                astro_image.info.score_data = analyzer.analyze_catalog(image, catalog)
+                astro_image.info.score_data = analyzer.analyze_catalog(image, catalog, settings.max_stars)
             except Exception:
                 logger.exception(f"Quality analysis failed: {astro_image.info.path.name}")
 

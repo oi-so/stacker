@@ -18,6 +18,8 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QHBoxLayout,
     QMessageBox,
+    QCheckBox,
+    QComboBox,
 )
 
 from ..core.provider import ImageManagerProvider
@@ -41,6 +43,7 @@ from .panels.log_panel import LogPanel, QtLogHandler
 from .panels.project_tree import ProjectTree
 from .viewer.image_viewer import ImageViewer
 from ..core.debayer import debayer
+from .viewer.image_viewer import StarDisplayMode
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +210,23 @@ class MainWindow(QMainWindow):
                 self.zoom_label.setText(f"{z:.0f}%")
         )
 
+        toolbar.addSeparator()
+        self.show_stars_checkbox = QCheckBox("星")
+        self.star_mode_combo = QComboBox()
+        self.star_mode_combo.addItems(["全星", "位置合わせ星"])
+        self.star_mode_combo.setEnabled(False)
+        toolbar.addWidget(self.show_stars_checkbox)
+        toolbar.addWidget(self.star_mode_combo)
+
+        self.show_stars_checkbox.toggled.connect(
+            self._on_show_stars_changed
+        )
+
+        self.star_mode_combo.currentIndexChanged.connect(
+            self._on_star_mode_changed
+        )
+
+
     def _create_menu(self):
         file_menu = self.menuBar().addMenu("ファイル")
         for frame_type in FrameType:
@@ -250,6 +270,26 @@ class MainWindow(QMainWindow):
         root.addHandler(handler)
         self._qt_log_handler = handler
 
+    
+    def _on_show_stars_changed(self, checked: bool):
+        self.star_mode_combo.setEnabled(checked)
+
+        if not checked:
+            self.viewer.set_star_display_mode(StarDisplayMode.NONE)
+            return
+
+        self._on_star_mode_changed(self.star_mode_combo.currentIndex())
+
+    def _on_star_mode_changed(self, index: int):
+        if not self.show_stars_checkbox.isChecked():
+            return
+
+        mode = (
+            StarDisplayMode.ALL if index == 0 else StarDisplayMode.ALIGNMENT
+        )
+        self.viewer.set_star_display_mode(mode)
+
+
     def _on_add_frames(self, frame_type: FrameType):
         paths, _ = QFileDialog.getOpenFileNames(
             self,
@@ -278,7 +318,7 @@ class MainWindow(QMainWindow):
                 + nd_img[1::2, 1::2]
             ) / 4
             nd_img = debayer(nd_img, image.info.cfa_type)
-            self.viewer.set_image(nd_img)
+            self.viewer.set_image(nd_img, image.info.stars.all_stars, image.info.stars.alignment_stars, 0.5, 0.5)
         except Exception as exc:
             ErrorDialog.show_exception(self, "画像表示エラー", exc)
 

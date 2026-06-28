@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 import numpy as np
 from enum import StrEnum
+from ..stars.star_data import StarCatalog
 
 from ..utils.serializable import SerializableMixin
 
@@ -148,6 +149,12 @@ class AlignmentData(SerializableMixin):
     rms_error: float | None = None
 
 
+@dataclass
+class StarDetectionData:
+    all_stars: StarCatalog | None = None
+    alignment_stars: StarCatalog | None = None
+
+
 
 @dataclass
 class AstroImageInfo(SerializableMixin):
@@ -165,22 +172,11 @@ class AstroImageInfo(SerializableMixin):
     f_number: float | None = None
 
     exif: dict | None = None
-
-    wcs: WCSData = field(
-        default_factory=WCSData
-    )
-
-    score_data: ScoreData = field(
-        default_factory=ScoreData
-    )
-
-    transform: TransformData = field(
-        default_factory=TransformData
-    )
-
-    alignment_data: AlignmentData = field(
-        default_factory=AlignmentData
-    )
+    wcs: WCSData = field(default_factory=WCSData)
+    score_data: ScoreData = field(default_factory=ScoreData)
+    transform: TransformData = field(default_factory=TransformData)
+    alignment_data: AlignmentData = field(default_factory=AlignmentData)
+    stars: StarDetectionData = field(default_factory=StarDetectionData)
 
     enabled: bool = True
     is_master: bool = False

@@ -1,7 +1,16 @@
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QPointF
 from PySide6.QtGui import QImage, QMouseEvent, QPixmap, QPainter, QNativeGestureEvent
 from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
 import numpy as np
+from enum import StrEnum
+
+from ...stars.star_data import StarCatalog
+
+
+class StarDisplayMode(StrEnum):
+    NONE = "none"
+    ALL = "all"
+    ALIGNMENT = "alignment"
 
 
 class ImageViewer(QGraphicsView):
@@ -12,9 +21,14 @@ class ImageViewer(QGraphicsView):
         self.scene = QGraphicsScene()
         self.setScene(self.scene)
         self.setBackgroundBrush(Qt.GlobalColor.black)
-        self._pixmap_item: QGraphicsPixmapItem | None = None
         self.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
-        self._pixmap_item = None
+        self._pixmap_item: QGraphicsPixmapItem | None = None
+        self._all_stars: StarCatalog | None = None
+        self._alignment_stars: StarCatalog | None = None
+        self._star_display_mode = StarDisplayMode.NONE
+
+        self._display_scale_x = 1.0
+        self._display_scale_y = 1.0
 
         # ドラッグで移動
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
@@ -28,6 +42,41 @@ class ImageViewer(QGraphicsView):
         )
         self._fit_mode = True
 
+    def set_star_display_mode(self, mode: StarDisplayMode):
+        self._star_display_mode = mode
+        self.viewport().update()
+
+    def drawForeground(self, painter: QPainter, rect):
+        super().drawForeground(painter, rect)
+        if self._pixmap_item is None:
+            return
+        if self._star_display_mode == StarDisplayMode.NONE:
+            return
+
+        if self._star_display_mode == StarDisplayMode.ALL:
+            catalog = self._all_stars
+        else:
+            catalog = self._alignment_stars
+
+        if catalog is None: return
+
+        radius = 8
+
+        pen = painter.pen()
+        if self._star_display_mode == StarDisplayMode.ALL:
+            pen.setColor(Qt.GlobalColor.yellow)
+        else:
+            pen.setColor(Qt.GlobalColor.red)
+        painter.setPen(pen)
+
+        for star in catalog.stars:
+            x = star.x * self._display_scale_x
+            y = star.y * self._display_scale_y
+            painter.drawEllipse(
+                QPointF(x, y),
+                radius,
+                radius,
+            )
 
     
     def fit_image(self):
@@ -62,17 +111,26 @@ class ImageViewer(QGraphicsView):
         )
 
 
-    def set_image(self, image: np.ndarray | None) -> None:
+    def set_image(self, image: np.ndarray | None, all_stars: StarCatalog | None = None, alignment_stars: StarCatalog | None = None, star_scale_x: float = 1.0, star_scale_y: float = 1.0) -> None:
+        self._all_stars = all_stars
+        self._alignment_stars = alignment_stars
+        self._display_scale_x = star_scale_x
+        self._display_scale_y = star_scale_y
         need_fits_image = False
         if self._pixmap_item is None: need_fits_image = True
-        self.scene.clear()
+        # self.scene.clear()
+        if self._pixmap_item is not None:
+            self.scene.removeItem(self._pixmap_item)
         self._pixmap_item = None
         if image is None:
+            self.viewport().update()
             return
         qimage = self._to_qimage(image)
         self._pixmap_item = self.scene.addPixmap(QPixmap.fromImage(qimage))
         self.scene.setSceneRect(self._pixmap_item.boundingRect())
         if need_fits_image: self.fit_image()
+        self.viewport().update()
+
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

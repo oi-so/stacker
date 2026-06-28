@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 
-@dataclass
+@dataclass(slots=True)
 class Star:
     """A detected star with centroid and photometry.
     
@@ -33,7 +33,7 @@ class Star:
 
 
 
-@dataclass
+@dataclass(slots=True)
 class StarCatalog:
     """Collection of stars from an image.
     
@@ -42,7 +42,7 @@ class StarCatalog:
     """
     stars: list[Star]
 
-    def brightest(self, n: int) -> list[Star]:
+    def brightest(self, n: int) -> "StarCatalog":
         """Get the N brightest stars (by flux).
         
         Args:
@@ -51,8 +51,8 @@ class StarCatalog:
         Returns:
             List of up to N brightest stars, sorted by flux (descending)
         """
-        return sorted(
+        return StarCatalog(sorted(
             self.stars,
             key=lambda s: s.flux,
             reverse=True
-        )[:n]
+        )[:n])
