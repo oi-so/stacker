@@ -23,4 +23,7 @@ build/
 test_images
 tests
 
+app.dist
+app.build
+
 activate_project.sh
