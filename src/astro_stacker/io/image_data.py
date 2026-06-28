@@ -183,6 +183,10 @@ class AstroImageInfo(SerializableMixin):
     master_type: str | None = None
     alignment_session_id: str | None = None
 
+    @property
+    def is_aligned(self) -> bool:
+        return self.transform is not None and self.transform.matrix is not None
+
 
 @dataclass
 class AstroImage:

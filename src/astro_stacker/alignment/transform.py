@@ -42,11 +42,12 @@ class AlignedFrameProvider:
         self.base_provider = base_provider
         self.transformer = transformer
 
-    
+
     def get_image(self, astro_image: AstroImage) -> np.ndarray:
         image = self.base_provider.get_image(astro_image)
 
         if astro_image.info.transform is None:
             return image
         
-        return self.transformer.apply_transform(image, astro_image.info.transform)
+        image = self.transformer.apply_transform(image, astro_image.info.transform)
+        return image

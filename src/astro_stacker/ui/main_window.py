@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
+from ..alignment.transform import ImageTransformer
 from ..io.image_manager import ImageManager
 from ..io.saver import save_image
 from ..pipeline.alignment_pipeline import AlignmentPipeline
@@ -40,8 +41,7 @@ from .panels.frame_table import FrameTable
 from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel, QtLogHandler
 from .panels.project_tree import ProjectTree
-from .viewer.image_viewer import ImageViewer
-from .viewer.image_viewer import StarDisplayMode
+from .viewer.image_viewer import ImageViewer, StarDisplayMode
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ class MainWindow(QMainWindow):
         self._worker: PipelineWorker | None = None
         self._aligned = False
         self._stacked = False
-        self.preview_provider = PreviewProvider(self.manager)
+        self.preview_provider = PreviewProvider(self.manager, ImageTransformer())
         self.preview_settings = PreviewSettings()
 
         self.setWindowTitle("Astro Stacker")
@@ -311,7 +311,13 @@ class MainWindow(QMainWindow):
 
         try:
             preview = self.preview_provider.get_image(image, self.preview_settings)
-            self.viewer.set_image(preview.image, image.info.stars.all_stars, image.info.stars.alignment_stars, preview.scale_x, preview.scale_y)
+            self.viewer.set_image(
+                preview.image,
+                preview.all_stars,
+                preview.alignment_stars,
+                preview.scale_x,
+                preview.scale_y
+                )
         except Exception as exc:
             ErrorDialog.show_exception(self, "画像表示エラー", exc)
 
