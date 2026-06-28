@@ -7,7 +7,7 @@ to produce a high signal-to-noise ratio output image.
 import numpy as np
 from typing import Iterable, Literal
 import logging
-from ..core.provider import FrameProvider
+from ..core.frame_provider import FrameProvider
 from ..io.image_data import AstroImage
 
 

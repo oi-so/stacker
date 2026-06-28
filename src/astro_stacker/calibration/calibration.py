@@ -9,7 +9,7 @@ import logging
 import numpy as np
 
 from ..io.image_data import AstroImage
-from ..core.provider import FrameProvider
+from ..core.frame_provider import FrameProvider
 from ..project.project import Project
 from ..project.settings import CalibrationSettings
 from ..stacking.combiner import Method, ImageCombiner
