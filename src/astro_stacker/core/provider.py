@@ -25,7 +25,7 @@ class PreviewSettings:
     aligned: bool = True
     binning: int = 2
     debayer: bool = True
-    before_binning: bool = True
+    before_binning: bool = False
 
 
 
