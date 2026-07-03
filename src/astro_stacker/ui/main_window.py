@@ -60,10 +60,14 @@ class PipelineWorker(QObject):
     @Slot()
     def run(self):
         try:
+            logger.info("Worker: pipeline returned")
             self.func(
                 self.progress.emit, 
                 lambda: self.cancel_requested
             )
+            logger.info("Worker: before finished.emit")
+            self.finished.emit()
+            logger.info("Worker: after finished.emit")
         except Exception as exc:
             logger.exception("Pipeline failed")
             self.failed.emit(exc)
@@ -122,6 +126,20 @@ class MainWindow(QMainWindow):
         main_splitter.setStretchFactor(0, 1)
 
         self.progress = QProgressBar()
+        self.progress.setMinimumHeight(20)
+        self.progress.setTextVisible(True)
+        self.progress.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid palette(mid);
+                border-radius: 4px;
+                text-align: center;
+            }
+
+            QProgressBar::chunk {
+                background-color: #3B82F6;
+                border-radius: 3px;
+            }
+        """)
         self.progress.setRange(0, 1)
         self.progress.setValue(0)
         self.progress_label = QLabel("準備完了")
@@ -131,6 +149,8 @@ class MainWindow(QMainWindow):
 
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(self.progress_label)
+        progress_layout.addStretch()
+        self.progress.setFixedWidth(250)
         progress_layout.addWidget(self.progress, 1)
         progress_layout.addWidget(self.cancel_button)
 
@@ -377,6 +397,15 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._update_progress)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(lambda: self._worker_done(on_success if is_success else None))
+
+        worker.finished.connect(
+            lambda: logger.info("worker.finished")
+        )
+
+        thread.finished.connect(
+            lambda: logger.info("thread.finished")
+        )
+
         self._thread = thread
         self._worker = worker
         thread.start()
