@@ -362,6 +362,7 @@ class MainWindow(QMainWindow):
         is_success = True
         def handle_failed(exe):
             nonlocal is_success
+            is_success = False
             ErrorDialog.show_exception(self, "処理エラー", exe)
 
         thread.started.connect(worker.run)
