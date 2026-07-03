@@ -3,6 +3,7 @@ from ..core.frame_provider import FrameProvider
 from ..stacking.combiner import ImageCombiner
 from ..project.project import Project
 from ..project.settings import StackingSettings
+from ..utils.timer import timer
 
 
 class StackingPipeline:
@@ -14,15 +15,16 @@ class StackingPipeline:
         if project.settings.use_alignment:
             provider = AlignedFrameProvider(provider, ImageTransformer())
 
-        combiner = ImageCombiner(provider)
+        with timer("StackWorkers"):
+            combiner = ImageCombiner(provider)
 
-        result = combiner.combine(
-            project.light_frames,
-            settings.method,
-            progress=progress,
-            is_cancelled=is_cancelled,
-            combine_msg="スタック後画像"
-        )
+            result = combiner.combine(
+                project.light_frames,
+                settings.method,
+                progress=progress,
+                is_cancelled=is_cancelled,
+                combine_msg="スタック後画像"
+            )
 
-        project.result.stacked_image = result
-        return 
+            project.result.stacked_image = result
+            return 
