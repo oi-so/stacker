@@ -80,7 +80,7 @@ def load_fits_info(path: Path) -> AstroImage:
         is_master=str(header.get("FRAMTYP", "")).startswith("master_"),
         master_type=header.get("FRAMTYP") if str(header.get("FRAMTYP", "")).startswith("master_") else None,
     )
-    return AstroImage(info=info, image=None) 
+    return AstroImage(info=info) 
 
 
 def load_fits_image(path: Path) -> np.ndarray:

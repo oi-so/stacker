@@ -46,8 +46,7 @@ def load_standard_info(path: Path) -> AstroImage:
                 exposure_time=exif_data.get('EXIF ExposureTime').values[0].num / exif_data.get('EXIF ExposureTime').values[0].den if 'EXIF ExposureTime' in exif_data else None,
                 iso=exif_data.get('EXIF ISOSpeedRatings').values[0] if 'EXIF ISOSpeedRatings' in exif_data else None,
                 exif={tag: str(value) for tag, value in exif_data.items()}
-            ),
-            image=None
+            )
         )
     
 

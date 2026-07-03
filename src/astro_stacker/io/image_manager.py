@@ -1,108 +1,65 @@
-"""Image memory management with LRU eviction.
-
-Manages loading and unloading of image data with configurable limits
-to prevent excessive memory usage. Uses an OrderedDict to track LRU (Least
-Recently Used) order for eviction.
-"""
+"""Image memory management with LRU eviction."""
 
 from collections import OrderedDict
+from threading import RLock
+
 import numpy as np
 
-from .image_data import AstroImage, AstroImageInfo
+from .image_data import AstroImage
 from .loader import load_image
 
 
 class ImageManager:
-    """Manages in-memory image data with automatic eviction.
-    
-    When more images are loaded than max_loaded_image_count, the least
-    recently used image is unloaded from memory.
-    """
+    """Manages in-memory image data with automatic LRU eviction."""
+
     def __init__(self, max_loaded_image_count: int = 5) -> None:
-        """Initialize ImageManager.
-        
-        Args:
-            max_loaded_image_count: Maximum number of images to keep in memory.
-                                   Default is 5. Increase for systems with more RAM.
-        """
-        self.__loaded_images: OrderedDict[int, AstroImage] = OrderedDict()
-        self.loaded_image_size = 0
         self.max_loaded_image_count = max_loaded_image_count
 
+        # key=id(AstroImage), value=np.ndarray
+        self._cache: OrderedDict[int, np.ndarray] = OrderedDict()
+        self._lock = RLock()
+
     def __evict_if_needed(self) -> None:
-        """Remove least recently used images if cache exceeds max_loaded_image_count."""
-        while len(self.__loaded_images) > self.max_loaded_image_count:
-            _, image = self.__loaded_images.popitem(last=False)
-            image.image = None
-    
+        while len(self._cache) > self.max_loaded_image_count:
+            self._cache.popitem(last=False)
 
     def get_image(self, image: AstroImage) -> np.ndarray:
-        """Get image data, loading from disk if necessary.
-        
-        Args:
-            image: AstroImage object to retrieve
-            
-        Returns:
-            Pixel data as numpy array
-            
-        Note:
-            Updates LRU order and may evict other images if needed.
-        """
-        if image.image is None:
-            image.image = load_image(image)
-
         key = id(image)
-        if key in self.__loaded_images:
-            # Move to end to mark as recently used
-            self.__loaded_images.move_to_end(key)
-        else:
-            self.__loaded_images[key] = image
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                self._cache.move_to_end(key)
+                return cached
+        loaded = load_image(image)
+        with self._lock:
+            cached = self._cache.get(key)
 
-        self.__evict_if_needed()
-        return image.image
+            if cached is not None:
+                self._cache.move_to_end(key)
+                return cached
 
+            self._cache[key] = loaded
+            self.__evict_if_needed()
+
+            return loaded
 
     def load(self, image: AstroImage) -> None:
-        """Load image data into memory (convenience method)."""
         self.get_image(image)
 
-
     def unload(self, image: AstroImage) -> None:
-        """Unload image data from memory.
-        
-        Args:
-            image: AstroImage object to unload
-        """
         key = id(image)
-        if key in self.__loaded_images:
-            del self.__loaded_images[key]
 
-        image.image = None
-
+        with self._lock:
+            self._cache.pop(key, None)
 
     def unload_all(self) -> None:
-        """Unload all images from memory."""
-        for image in self.__loaded_images.values():
-            image.image = None
-        self.__loaded_images.clear()
-
+        with self._lock:
+            self._cache.clear()
 
     def is_loaded(self, image: AstroImage) -> bool:
-        """Check if image is currently in memory.
-        
-        Args:
-            image: AstroImage object to check
-            
-        Returns:
-            True if image data is loaded
-        """
-        return id(image) in self.__loaded_images
-    
+        with self._lock:
+            return id(image) in self._cache
 
     def loaded_count(self) -> int:
-        """Get number of images currently in memory.
-        
-        Returns:
-            Count of loaded images
-        """
-        return len(self.__loaded_images)
+        with self._lock:
+            return len(self._cache)

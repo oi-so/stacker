@@ -349,6 +349,10 @@ class MainWindow(QMainWindow):
 
         self._run_worker(work, on_success=self._stacking_finished)
 
+    @Slot(object)
+    def _on_worker_failed_trigger(self, exc):
+        """メインスレッド側で安全にエラーダイアログを表示するためのスロット"""
+        ErrorDialog.show_exception(self, "処理エラー", exc)
 
     def _run_worker(self, func, on_success):
         self.progress.setRange(0, 0)
@@ -361,13 +365,13 @@ class MainWindow(QMainWindow):
         worker.moveToThread(thread)
 
         is_success = True
-        def handle_failed(exe):
+        def handle_failed(exc):
             nonlocal is_success
             is_success = False
-            ErrorDialog.show_exception(self, "処理エラー", exe)
 
         thread.started.connect(worker.run)
         worker.failed.connect(handle_failed)
+        worker.failed.connect(self._on_worker_failed_trigger)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         worker.progress.connect(self._update_progress)
@@ -439,7 +443,6 @@ class MainWindow(QMainWindow):
             action.setEnabled(not busy)
         self.frame_table.setEnabled(not busy)
         self.project_tree.setEnabled(not busy)
-        self.bottom_tabs.setEnabled(not busy)
 
     def _update_actions(self):
         has_lights = bool(self.controller.project.light_frames)
