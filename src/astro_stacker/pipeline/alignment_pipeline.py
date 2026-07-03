@@ -165,8 +165,8 @@ class AlignmentPipeline:
 
                     try:
                         result = align_catalogs(
-                            reference_alignment_catalog,
-                            detection.alignment_catalog,
+                            reference_catalog,
+                            detection.catalog,
                         )
                     except Exception:
                         logger.exception("Align failed: %s", astro_image.info.path.name)
