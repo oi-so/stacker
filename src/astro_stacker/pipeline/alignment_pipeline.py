@@ -1,13 +1,19 @@
 from ..core.frame_provider import FrameProvider
 from ..project.project import Project
 from ..project.settings import AlignmentSettings, AlignmentMode, ReferenceMode
-from ..stars.detector import detect_stars
 from ..alignment.aligner import align_catalogs
 from ..io.image_data import TransformData, AlignmentData
-from ..stars.quality import QualityAnalyzer
+import os
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from ..alignment.detection import process_frame
+
 import logging
 
 logger = logging.getLogger(__name__)
+
+cpu = os.cpu_count()
+MAX_WORKERS: int | None = cpu - 1 if cpu else None
 
 class AlignmentPipeline:
     def __init__(self, provider: FrameProvider) -> None:
@@ -100,62 +106,75 @@ class AlignmentPipeline:
 
         if is_cancelled and is_cancelled():
             return
-        
-        analyzer = QualityAnalyzer()
 
         reference.info.alignment_session_id = session_id
         reference.info.transform = TransformData()
         reference.info.alignment_data = AlignmentData()
         project.set_reference_image(reference)
 
-        reference_image = self.provider.get_image(reference)
-        reference_catalog = detect_stars(reference_image, sigma=settings.sigma)
-        reference_alignment_catalog = reference_catalog.brightest(settings.max_stars)
+        reference_result = process_frame(
+            self.provider,
+            reference,
+            settings.sigma,
+            settings.max_stars,
+        )
+
+        reference_catalog = reference_result.catalog
+        reference_alignment_catalog = reference_result.alignment_catalog
+
         reference.info.stars.all_stars = reference_catalog
         reference.info.stars.alignment_stars = reference_alignment_catalog
+        reference.info.score_data = reference_result.score_data
 
-        try:
-            reference.info.score_data = analyzer.analyze_catalog(reference_image, reference_catalog, settings.max_stars)
-        except Exception:
-            logger.exception(f"Quality analysis failed: reference_image {reference.info.path.name}")
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {
+                executor.submit(
+                    process_frame,
+                    self.provider,
+                    frame,
+                    settings.sigma,
+                    settings.max_stars,
+                ): frame
+                for frame in frames_to_align
+                if frame is not reference
+            }
 
-        for astro_image in frames_to_align:
-            if astro_image is reference:
-                continue
+            for future in as_completed(futures):
+                astro_image = futures[future]
 
-            if is_cancelled and is_cancelled():
-                return
+                if is_cancelled and is_cancelled():
+                    return
 
-            finished += 1
-            if progress:
-                progress("位置合わせ中", finished, total, astro_image.info.path.name)
+                finished += 1
 
-            image = self.provider.get_image(astro_image)
-            catalog = detect_stars(image, sigma=settings.sigma)
-            alignment_catalog = catalog.brightest(settings.max_stars)
-            astro_image.info.stars.all_stars = catalog
-            astro_image.info.stars.alignment_stars = alignment_catalog
-            try:
-                astro_image.info.score_data = analyzer.analyze_catalog(image, catalog, settings.max_stars)
-            except Exception:
-                logger.exception(f"Quality analysis failed: {astro_image.info.path.name}")
+                if progress:
+                    progress("位置合わせ中", finished, total, astro_image.info.path.name)
 
-            result = None
-            try:
-                result = align_catalogs(reference_catalog, catalog)
-            except Exception:
-                logger.exception(f"Align analysis failed: {astro_image.info.path.name}")
+                try:
+                    # ここで例外が発生する可能性（process_frame 内のエラー）をキャッチできるようにする
+                    detection = future.result()
+                except Exception:
+                    logger.exception("星の検出に失敗しました: %s", astro_image.info.path.name)
+                    continue
 
-            if result is None: continue
-            astro_image.info.transform = (result.transform)
-            astro_image.info.alignment_data = (result.info)
-            astro_image.info.alignment_session_id = (session_id)
+                astro_image.info.stars.all_stars = detection.catalog
+                astro_image.info.stars.alignment_stars = detection.alignment_catalog
+                astro_image.info.score_data = detection.score_data
 
-            logger.info(
-                "Aligned %s: matched=%s rms=%.3f",
-                astro_image.info.path.name,
-                result.info.matched_star_count,
-                result.info.rms_error or 0.0,
-            )
+                try:
+                    result = align_catalogs(
+                        reference_alignment_catalog,
+                        detection.alignment_catalog,
+                    )
+                except Exception:
+                    logger.exception("Align failed: %s", astro_image.info.path.name)
+                    continue
+
+                if result is None:
+                    continue
+
+                astro_image.info.transform = result.transform
+                astro_image.info.alignment_data = result.info
+                astro_image.info.alignment_session_id = session_id
 
         project.alignment_signature = project.make_alignment_signature()

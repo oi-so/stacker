@@ -65,6 +65,7 @@ class PipelineWorker(QObject):
                 lambda: self.cancel_requested
             )
         except Exception as exc:
+            logger.exception("Pipeline failed")
             self.failed.emit(exc)
         finally:
             self.finished.emit()

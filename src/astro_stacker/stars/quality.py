@@ -2,7 +2,6 @@
 
 import numpy as np
 from ..io.image_data import ScoreData
-from .detector import detect_stars
 from .fwhm import measure_fwhm
 from ..stars.star_data import StarCatalog
 from astropy.stats import sigma_clipped_stats
