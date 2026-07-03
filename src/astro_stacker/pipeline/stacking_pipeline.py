@@ -15,7 +15,7 @@ class StackingPipeline:
         if project.settings.use_alignment:
             provider = AlignedFrameProvider(provider, ImageTransformer())
 
-        with timer("StackWorkers"):
+        with timer("StackWorkers", True):
             combiner = ImageCombiner(provider)
 
             result = combiner.combine(
