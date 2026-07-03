@@ -122,10 +122,8 @@ class AlignmentPipeline:
             )
 
             reference_catalog = reference_result.catalog
-            reference_alignment_catalog = reference_result.alignment_catalog
 
             reference.info.stars.all_stars = reference_catalog
-            reference.info.stars.alignment_stars = reference_alignment_catalog
             reference.info.score_data = reference_result.score_data
 
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
@@ -160,7 +158,6 @@ class AlignmentPipeline:
                         continue
 
                     astro_image.info.stars.all_stars = detection.catalog
-                    astro_image.info.stars.alignment_stars = detection.alignment_catalog
                     astro_image.info.score_data = detection.score_data
 
                     try:
