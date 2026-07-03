@@ -251,7 +251,7 @@ class MainWindow(QMainWindow):
         self.frame_table.frame_selected.connect(self._preview_frame)
         self.frame_table.enabled_changed.connect(lambda *_: self._update_actions())
         self.frame_table.removed.connect(self.controller.remove_frames)
-        self.frame_table.selection_cleared.connect(self.viewer.set_image(None))
+        self.frame_table.selection_cleared.connect(lambda: self.viewer.set_image(None))
         self.frame_table.reference_image_requested.connect(self.controller.project.set_reference_image)
 
         def on_reference_changed(image):
@@ -358,13 +358,19 @@ class MainWindow(QMainWindow):
         thread = QThread(self)
         worker = PipelineWorker(func)
         worker.moveToThread(thread)
+
+        is_success = True
+        def handle_failed(exe):
+            nonlocal is_success
+            ErrorDialog.show_exception(self, "処理エラー", exe)
+
         thread.started.connect(worker.run)
-        # worker.failed.connect(lambda exc: ErrorDialog.show_exception(self, "処理エラー", exc))
+        worker.failed.connect(handle_failed)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         worker.progress.connect(self._update_progress)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: self._worker_done(on_success))
+        thread.finished.connect(lambda: self._worker_done(on_success if is_success else None))
         self._thread = thread
         self._worker = worker
         thread.start()
@@ -376,7 +382,10 @@ class MainWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self._set_busy(False)
         self._refresh_tables()
-        on_success()
+
+        if on_success:
+            on_success()
+        
         self._update_actions()
         self._thread = None
         self._worker = None
