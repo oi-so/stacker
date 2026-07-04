@@ -1,7 +1,7 @@
 import logging
 
 from PySide6.QtCore import QObject, Signal
-from PySide6.QtGui import QTextCharFormat, QColor
+from PySide6.QtGui import QTextCharFormat, QColor, QPalette
 from PySide6.QtWidgets import QHBoxLayout, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 
@@ -34,7 +34,7 @@ class LogPanel(QWidget):
         clear.clicked.connect(self.editor.clear)
 
     def append_log(self, level: int, text: str) -> None:
-        color = QColor("white")
+        color = QColor(self.palette().color(QPalette.ColorRole.Text))
         if level >= logging.ERROR:
             color = QColor("#ff6b6b")
         elif level >= logging.WARNING:
