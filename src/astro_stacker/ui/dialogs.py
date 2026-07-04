@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..project.project import Project
-from ..project.settings import AlignmentMode, ReferenceMode
+from ..project.settings import AlignmentMode, ReferenceMode, StackingMethod
 
 
 class AlignmentSettingsDialog(QDialog):
@@ -161,10 +161,10 @@ class StackingSettingsDialog(QDialog):
         self.setWindowTitle("スタック設定")
         layout = QFormLayout(self)
         self.method = QComboBox()
-        self.method.addItems(["Mean", "Median", "Sigma Clipping", "Add"])
-        methods = ["mean", "median", "sigma_clip", "add"]
+        for method in StackingMethod:
+            self.method.addItem(method.show_name, method)
         current = self.settings.value("stacking/method", project.settings.light_frame.method)
-        self.method.setCurrentIndex(methods.index(current) if current in methods else 0)
+        self.method.setCurrentIndex(self.method.findData(current))
         layout.addRow("スタック方法", self.method)
 
 
@@ -211,7 +211,7 @@ class StackingSettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def accept(self) -> None:
-        methods = ["mean", "median", "sigma_clip", "add"]
+        methods = list(StackingMethod.__members__.values())
         self.project.settings.light_frame.method = methods[self.method.currentIndex()]
         self.project.settings.light_frame.sigma = self.sigma.value()
         self.project.settings.light_frame.iterations = self.iterations.value()

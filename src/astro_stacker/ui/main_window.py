@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal, Slot
 from PySide6.QtGui import QAction
@@ -113,6 +114,8 @@ class MainWindow(QMainWindow):
         self.bottom_tabs = QTabWidget()
         self.bottom_tabs.addTab(self.frame_table, "フレーム一覧")
         self.bottom_tabs.addTab(self.log_panel, "ログ")
+        self.log_panel.append_log(logging.INFO, "Started Astro Stacker!!")
+        self.log_panel.append_log(logging.INFO, f"Started at: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}")
 
         center_splitter = QSplitter(Qt.Orientation.Horizontal)
         center_splitter.addWidget(self.project_tree)

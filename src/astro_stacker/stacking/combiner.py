@@ -5,22 +5,26 @@ to produce a high signal-to-noise ratio output image.
 """
 
 import numpy as np
-from typing import Iterable, Literal
 import logging
+import os
+import tempfile
+from pathlib import Path
+
+from astro_stacker.project.settings import StackingMethod
 from ..core.frame_provider import FrameProvider
 from ..io.image_data import AstroImage
 
 
-Method = Literal["mean", "median", "sigma_clip", "add"]
 logger = logging.getLogger(__name__)
 
+MEMORY_LIMIT = 512 * 1024 * 1024
 
 
 class ImageCombiner:
     """Combine multiple images using a chosen method.
     
     Supports:
-    - mean: Simple average
+    - average: Simple average
     - median: Median (robust to outliers)
     - sigma_clip: Sigma clipping (rejects outliers beyond N*sigma)
     - add: Sum all images
@@ -32,7 +36,7 @@ class ImageCombiner:
     def combine(
         self, 
         images: list[AstroImage], 
-        method: Method = "mean",
+        method: StackingMethod = StackingMethod.AVERAGE,
         progress=None,
         is_cancelled=None,
         combine_msg: str = "スタック画像"
@@ -41,7 +45,7 @@ class ImageCombiner:
         
         Args:
             images: Iterable of aligned AstroImage objects
-            method: Combination method ("mean", "median", "sigma_clip", "add")
+            method: Combination method ("average", "median", "sigma_clip", "add")
             
         Returns:
             Combined image as numpy array
@@ -51,20 +55,20 @@ class ImageCombiner:
         """
         enabled_images = [image for image in images if image.info.enabled]
         logger.info("Combining %d frames with method=%s", len(enabled_images), method)
-        if method == "mean":
-            return self._mean(enabled_images, progress, is_cancelled, combine_msg)
-        elif method == "add":
+        if method == StackingMethod.AVERAGE:
+            return self._average(enabled_images, progress, is_cancelled, combine_msg)
+        elif method == StackingMethod.ADD:
             return self._add(enabled_images, progress, is_cancelled, combine_msg)
-        elif method == "median":
-            return self._median(enabled_images)
-        elif method == "sigma_clip":
-            return self._sigma_clip(enabled_images)
+        elif method == StackingMethod.MEDIAN:
+            return self._median(enabled_images, progress, is_cancelled, combine_msg)
+        elif method == StackingMethod.SIGMA_CLIP:
+            return self._sigma_clip(enabled_images, progress, is_cancelled, combine_msg)
         else:
             raise ValueError(f"Unknown method: {method}")
         
 
-    def _mean(self, images: list[AstroImage], progress=None, is_cancelled=None, combine_msg: str = "スタック画像") -> np.ndarray | None:
-        """Compute mean of images. Sensitive to outliers but fast."""
+    def _average(self, images: list[AstroImage], progress=None, is_cancelled=None, combine_msg: str = "スタック画像") -> np.ndarray | None:
+        """Compute average of images. Sensitive to outliers but fast."""
         acc = None
         count = 0
 
@@ -72,7 +76,7 @@ class ImageCombiner:
             if is_cancelled and is_cancelled(): return None
             if progress:
                 progress(f"{combine_msg}生成中", i, len(images), f"{img.info.path.name}")
-            logger.info("Meaning frame %d/%d: %s", i, len(images), img.info.path.name)
+            logger.info("Averaging frame %d/%d: %s", i, len(images), img.info.path.name)
 
             arr = self.provider.get_image(img).astype(np.float32)
 
@@ -111,67 +115,220 @@ class ImageCombiner:
         
         return acc
     
-    
-    # Future: process large datasets in tiles to reduce memory use.
-    def _median(
+
+    def _calc_row_chunk(self, shape: tuple[int, ...], dtype: np.dtype, num_images: int) -> int:
+        bytes_per_pixel = np.dtype(dtype).itemsize
+        bytes_per_row = num_images * shape[1] * bytes_per_pixel
+
+        if len(shape) == 3:
+            bytes_per_row *= shape[2]
+
+        return max(1, MEMORY_LIMIT // bytes_per_row)
+
+
+    def _build_memmap(
         self,
         images: list[AstroImage],
+        shape,
+        dtype,
         progress=None,
-        is_cancelled=None, 
-        combine_msg: str = "スタック画像"
-    ) -> np.ndarray:
-
-        stack = []
-        if progress:
-            progress(f"{combine_msg}生成中", 0, 1, "画像読み込み中...")
-
-
-        for i, img in enumerate(images):
-            stack.append(
-                self.provider.get_image(
-                    img
-                ).astype(np.float32)
-            )
-            logger.info("Loading frame %d", img.info.path.name)
-
-        if len(stack) == 0:
-            raise ValueError(
-                "No images provided"
+        is_cancelled=None,
+        combine_msg="スタック画像",
+        temp_dir: Path | None = None,
+    ) -> tuple[np.memmap, str] | tuple[None, None]:
+        
+        if temp_dir is None:
+            fd, tmp_filename = tempfile.mkstemp(suffix=".dat")
+        else:
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            fd, tmp_filename = tempfile.mkstemp(
+                suffix=".dat",
+                dir=temp_dir,
             )
 
-        logger.info("Taking the median...")
-        return np.median(
-            np.stack(stack),
-            axis=0
+        os.close(fd)
+
+        mmap_stack = np.memmap(
+            tmp_filename,
+            dtype=dtype,
+            mode="w+",
+            shape=(len(images), *shape),
         )
 
+        try:
+            for i, img in enumerate(images):
+                if is_cancelled and is_cancelled():
+                    del mmap_stack
+                    os.remove(tmp_filename)
+                    return None, None
 
-    # Future: process large datasets in tiles to reduce memory use.
-    def _sigma_clip(self, images: list[AstroImage], sigma=3.0, progress=None, is_cancelled=None, combine_msg: str = "スタック画像"):
-        """Sigma clipping: reject pixels more than sigma*std from mean.
-        
-        Robust to cosmic rays and outliers, but computationally expensive.
-        """
-        stack = []
+                if progress:
+                    progress(
+                        f"{combine_msg}データ準備中",
+                        i + 1,
+                        len(images),
+                        img.info.path.name,
+                    )
 
-        for img in images:
-            arr = self.provider.get_image(img).astype(np.float32)
-            stack.append(arr)
-            logger.info("Loading frame %d", img.info.path.name)
+                logger.info(
+                    "Loading frame %d/%d: %s",
+                    i + 1,
+                    len(images),
+                    img.info.path.name,
+                )
 
-        if len(stack) == 0: 
-            raise ValueError("No images provided")
-        
-        logger.info("Stacking frames")
+                mmap_stack[i] = self.provider.get_image(img).astype(dtype)
 
-        stack = np.stack(stack, axis=0)
+            mmap_stack.flush()
+            del mmap_stack
 
-        logger.info("Meaning frames")
-        mean = np.mean(stack, axis=0)
-        std = np.std(stack, axis=0)
+            mmap_stack = np.memmap(
+                tmp_filename,
+                dtype=dtype,
+                mode="r",
+                shape=(len(images), *shape),
+            )
 
-        logger.info("Clipping frames")
-        mask = np.abs(stack - mean) <= sigma * std
-        masked = np.where(mask, stack, np.nan)
+            return mmap_stack, tmp_filename
 
-        return np.nanmean(masked, axis=0)
+        except Exception:
+            del mmap_stack
+            if os.path.exists(tmp_filename):
+                os.remove(tmp_filename)
+            raise
+    
+    def _median(
+        self,
+        images,
+        progress=None,
+        is_cancelled=None,
+        combine_msg="スタック画像",
+    ) -> np.ndarray | None:
+        first = self.provider.get_image(images[0])
+
+        shape = first.shape
+        dtype = np.float32
+        num_images = len(images)
+
+        mmap_stack, tmp_filename = self._build_memmap(
+            images,
+            shape,
+            dtype,
+            progress,
+            is_cancelled,
+            combine_msg,
+        )
+
+        if mmap_stack is None:
+            return None
+
+        try:
+            result = np.empty(shape, dtype=dtype)
+
+            row_chunk = self._calc_row_chunk(shape, dtype, num_images)
+            h = shape[0]
+            num_chunks = (h + row_chunk - 1) // row_chunk
+
+            logger.info(
+                "Median: row_chunk=%d (%d chunks)",
+                row_chunk,
+                num_chunks,
+            )
+
+            for chunk_idx, y in enumerate(range(0, h, row_chunk)):
+                if is_cancelled and is_cancelled():
+                    return None
+
+                if progress:
+                    progress(
+                        f"{combine_msg}生成中",
+                        chunk_idx + 1,
+                        num_chunks,
+                        "メディアン計算中...",
+                    )
+
+                y_end = min(y + row_chunk, h)
+
+                chunk = mmap_stack[:, y:y_end]
+
+                result[y:y_end] = np.median(chunk, axis=0)
+
+            return result
+
+        finally:
+            del mmap_stack
+            if os.path.exists(tmp_filename):
+                os.remove(tmp_filename)
+
+
+    def _sigma_clip(
+        self,
+        images,
+        progress=None,
+        is_cancelled=None,
+        combine_msg="スタック画像",
+        sigma=3.0,
+    ) -> np.ndarray | None:
+        first = self.provider.get_image(images[0])
+
+        shape = first.shape
+        dtype = np.float32
+        num_images = len(images)
+
+        mmap_stack, tmp_filename = self._build_memmap(
+            images,
+            shape,
+            dtype,
+            progress,
+            is_cancelled,
+            combine_msg,
+        )
+
+        if mmap_stack is None:
+            return None
+
+        try:
+            result = np.empty(shape, dtype=dtype)
+
+            row_chunk = self._calc_row_chunk(shape, dtype, num_images)
+            h = shape[0]
+            num_chunks = (h + row_chunk - 1) // row_chunk
+
+            logger.info(
+                "Sigma clip: row_chunk=%d (%d chunks)",
+                row_chunk,
+                num_chunks,
+            )
+
+            for chunk_idx, y in enumerate(range(0, h, row_chunk)):
+                if is_cancelled and is_cancelled():
+                    return None
+
+                if progress:
+                    progress(
+                        f"{combine_msg}生成中",
+                        chunk_idx + 1,
+                        num_chunks,
+                        "シグマクリップ中...",
+                    )
+
+                y_end = min(y + row_chunk, h)
+
+                chunk = np.array(
+                    mmap_stack[:, y:y_end],
+                    copy=True,
+                )
+
+                mean = np.mean(chunk, axis=0)
+                std = np.std(chunk, axis=0)
+
+                chunk[np.abs(chunk - mean) > sigma * std] = np.nan
+
+                result[y:y_end] = np.nanmean(chunk, axis=0)
+
+            return result
+
+        finally:
+            del mmap_stack
+            if os.path.exists(tmp_filename):
+                os.remove(tmp_filename)

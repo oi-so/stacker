@@ -23,6 +23,11 @@ class ProjectSettings:
     bias_frame: StackingSettings = field(default_factory=StackingSettings)
 
 
+@dataclass
+class AppSettings:
+    temp_directory: Path | None = None
+
+
 
 @dataclass
 class ProjectResult:
@@ -72,6 +77,8 @@ class Project:
     master_calibration_frames: MasterCalibrationFrames = field(default_factory=MasterCalibrationFrames)
 
     reference_image: AstroImage | None = None
+    app_settings: AppSettings = field(default_factory=AppSettings)
+    USE_CPU_COUNT: int = 0
 
 
     output_path: Path | None = None
