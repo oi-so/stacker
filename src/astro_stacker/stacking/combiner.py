@@ -60,9 +60,9 @@ class ImageCombiner:
         elif method == "add":
             return self._add(enabled_images, progress, is_cancelled, combine_msg)
         elif method == "median":
-            return self._median(enabled_images)
+            return self._median(enabled_images, progress, is_cancelled, combine_msg)
         elif method == "sigma_clip":
-            return self._sigma_clip(enabled_images)
+            return self._sigma_clip(enabled_images, progress, is_cancelled, combine_msg)
         else:
             raise ValueError(f"Unknown method: {method}")
         
@@ -264,10 +264,10 @@ class ImageCombiner:
     def _sigma_clip(
         self,
         images,
-        sigma=3.0,
         progress=None,
         is_cancelled=None,
         combine_msg="スタック画像",
+        sigma=3.0,
     ) -> np.ndarray | None:
         first = self.provider.get_image(images[0])
 
