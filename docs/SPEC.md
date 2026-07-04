@@ -52,7 +52,7 @@ flowchart TD
 - `AlignmentSettings.sigma`: 5.0
 - `AlignmentSettings.reference_mode`: `middle`
 - `AlignmentSettings.calibrate_before_align`: True
-- `StackingSettings.method`: `mean`
+- `StackingSettings.method`: `average`
 - `StackingSettings.sigma`: 3.0
 - `StackingSettings.iterations`: 1
 - `ProjectSettings.debayer_timing`: `before_stack`
@@ -77,7 +77,7 @@ flowchart TD
 - `ImageShape`: width/height/channels。
 - `AlignmentData`: 参照星数、一致星数、RMS。
 - `AstroImageInfo`: パス、形状、EXIF、スコア、変換、`enabled`、`is_master`、`master_type`。
-- `AstroImage`: `info` と遅延ロードされる `image`。`load()` と `unload()` を持つ。
+- `AstroImage`: `info` を持つ軽量コンテナ。ピクセルの遅延ロードと解放は `ImageManager` が担当する。
 
 ### `io/loader.py`
 
@@ -167,7 +167,7 @@ flowchart TD
 
 ### `stacking/combiner.py`
 
-- `ImageCombiner.combine(images, method)`: 有効フレームのみを `mean`, `median`, `sigma_clip`, `add` で合成する。
+- `ImageCombiner.combine(images, method)`: 有効フレームのみを `average`, `median`, `sigma_clip`, `add` で合成する。
 - `_sigma_clip(images, sigma=3.0)`: 平均と標準偏差で外れ値をNaN化して平均する。
 
 ### `pipeline/alignment_pipeline.py`
@@ -234,5 +234,9 @@ flowchart TD
 
 - Plate Solve、Drizzle、クロップ、ホットピクセル除去は未実装。
 - Sigma ClippingのUI設定のうち繰り返し回数は未反映。
-- 大量フレームのMedian/Sigma Clipは全画像をメモリへ積むため、タイル処理が今後必要。
+- Median/Sigma Clipは一時memmapへ全フレームを書き出し、行チャンク単位で計算する。メモリ使用量は抑えるが、
+  一時ディスク容量は概ね `枚数 * 高さ * 幅 * チャンネル * 4 bytes` 必要。
+- 一時memmapの保存先は現状システム一時ディレクトリで、`Project.app_settings.temp_directory` には未接続。
 - 言語切り替えは設定保存と再起動通知まで。即時再翻訳は未実装。
+- 参照画像の「最高品質」自動選択は未実装。
+- `AstroImage` 自体に `load()` / `unload()` はなく、ピクセル管理は `ImageManager` が担当する。
