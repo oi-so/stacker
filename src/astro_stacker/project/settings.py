@@ -1,12 +1,27 @@
 from dataclasses import dataclass
-from ..stacking.combiner import Method
 from enum import StrEnum
 
 
 
+class StackingMethod(StrEnum):
+    AVERAGE = "average"
+    MEDIAN = "median"
+    ADD = "add"
+    SIGMA_CLIP = "sigma_clip"
+
+    @property
+    def show_name(self) -> str:
+        return {
+            StackingMethod.AVERAGE: "Average",
+            StackingMethod.MEDIAN: "Median",
+            StackingMethod.ADD: "Add",
+            StackingMethod.SIGMA_CLIP: "Sigma Clipping",
+        }[self]
+
+
 @dataclass
 class StackingSettings:
-    method: Method = "mean"
+    method: StackingMethod = StackingMethod.AVERAGE
     sigma: float = 3.0
     iterations: int = 1
 

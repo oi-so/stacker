@@ -11,8 +11,8 @@ import numpy as np
 from ..io.image_data import AstroImage
 from ..core.frame_provider import FrameProvider
 from ..project.project import Project
-from ..project.settings import CalibrationSettings
-from ..stacking.combiner import Method, ImageCombiner
+from ..project.settings import CalibrationSettings, StackingMethod
+from ..stacking.combiner import ImageCombiner
 
 from collections.abc import Iterable
 
@@ -93,7 +93,7 @@ class MasterFrameBuilder:
         self.provider = provider
         self.combiner = ImageCombiner(provider)
 
-    def build(self, images: list[AstroImage], method: Method = "median", progress = None, is_cancelled=None, master_type=None) -> np.ndarray | None:
+    def build(self, images: list[AstroImage], method: StackingMethod = StackingMethod.AVERAGE, progress = None, is_cancelled=None, master_type=None) -> np.ndarray | None:
         if master_type is None: master_type = "スタック画像"
         img = self.combiner.combine(images, method, progress, is_cancelled, master_type)
         if img is None: return None

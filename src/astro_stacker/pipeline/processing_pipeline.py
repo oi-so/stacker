@@ -11,7 +11,7 @@ from ..io.loader import load_info
 from ..io.saver import save_fits
 from ..core.provider import ImageManagerProvider, DebayerFrameProvider, CalibratedFrameProvider
 from ..project.project import Project
-from ..project.settings import DebayerTiming
+from ..project.settings import DebayerTiming, StackingMethod
 from ..calibration.calibration import MasterFrameBuilder, Calibrator
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.stacking_pipeline import StackingPipeline
@@ -75,7 +75,7 @@ class ProcessingPipeline:
         builder: MasterFrameBuilder,
         frames: list[AstroImage],
         use_frame: bool,
-        method: str,
+        method: StackingMethod,
         master_type: str,
         progress=None,
         is_cancelled=None,

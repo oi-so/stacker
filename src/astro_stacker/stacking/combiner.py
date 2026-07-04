@@ -5,16 +5,16 @@ to produce a high signal-to-noise ratio output image.
 """
 
 import numpy as np
-from typing import Literal
 import logging
 import os
 import tempfile
 from pathlib import Path
+
+from astro_stacker.project.settings import StackingMethod
 from ..core.frame_provider import FrameProvider
 from ..io.image_data import AstroImage
 
 
-Method = Literal["mean", "median", "sigma_clip", "add"]
 logger = logging.getLogger(__name__)
 
 MEMORY_LIMIT = 512 * 1024 * 1024
@@ -24,7 +24,7 @@ class ImageCombiner:
     """Combine multiple images using a chosen method.
     
     Supports:
-    - mean: Simple average
+    - average: Simple average
     - median: Median (robust to outliers)
     - sigma_clip: Sigma clipping (rejects outliers beyond N*sigma)
     - add: Sum all images
@@ -36,7 +36,7 @@ class ImageCombiner:
     def combine(
         self, 
         images: list[AstroImage], 
-        method: Method = "mean",
+        method: StackingMethod = StackingMethod.AVERAGE,
         progress=None,
         is_cancelled=None,
         combine_msg: str = "スタック画像"
@@ -45,7 +45,7 @@ class ImageCombiner:
         
         Args:
             images: Iterable of aligned AstroImage objects
-            method: Combination method ("mean", "median", "sigma_clip", "add")
+            method: Combination method ("average", "median", "sigma_clip", "add")
             
         Returns:
             Combined image as numpy array
@@ -55,20 +55,20 @@ class ImageCombiner:
         """
         enabled_images = [image for image in images if image.info.enabled]
         logger.info("Combining %d frames with method=%s", len(enabled_images), method)
-        if method == "mean":
-            return self._mean(enabled_images, progress, is_cancelled, combine_msg)
-        elif method == "add":
+        if method == StackingMethod.AVERAGE:
+            return self._average(enabled_images, progress, is_cancelled, combine_msg)
+        elif method == StackingMethod.ADD:
             return self._add(enabled_images, progress, is_cancelled, combine_msg)
-        elif method == "median":
+        elif method == StackingMethod.MEDIAN:
             return self._median(enabled_images, progress, is_cancelled, combine_msg)
-        elif method == "sigma_clip":
+        elif method == StackingMethod.SIGMA_CLIP:
             return self._sigma_clip(enabled_images, progress, is_cancelled, combine_msg)
         else:
             raise ValueError(f"Unknown method: {method}")
         
 
-    def _mean(self, images: list[AstroImage], progress=None, is_cancelled=None, combine_msg: str = "スタック画像") -> np.ndarray | None:
-        """Compute mean of images. Sensitive to outliers but fast."""
+    def _average(self, images: list[AstroImage], progress=None, is_cancelled=None, combine_msg: str = "スタック画像") -> np.ndarray | None:
+        """Compute average of images. Sensitive to outliers but fast."""
         acc = None
         count = 0
 
@@ -76,7 +76,7 @@ class ImageCombiner:
             if is_cancelled and is_cancelled(): return None
             if progress:
                 progress(f"{combine_msg}生成中", i, len(images), f"{img.info.path.name}")
-            logger.info("Meaning frame %d/%d: %s", i, len(images), img.info.path.name)
+            logger.info("Averaging frame %d/%d: %s", i, len(images), img.info.path.name)
 
             arr = self.provider.get_image(img).astype(np.float32)
 
