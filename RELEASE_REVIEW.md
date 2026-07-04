@@ -17,7 +17,7 @@ Critical は今回確認した範囲ではありません。High はリリース
 
 ## 重要バグ
 
-### High: QThread worker が成功時に `finished` を二重 emit する
+### High: QThread worker が成功時に `finished` を二重 emit する (修正済み)
 
 根拠: `src/astro_stacker/ui/main_window.py:69-76`
 
