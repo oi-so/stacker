@@ -38,7 +38,7 @@ def load_fits_info(path: Path) -> AstroImage:
         channels = 1
     elif len(shape) == 3:
         # Heuristic: if first dimension is small, it's likely channels
-        if len(str(shape[0])) <= 4:
+        if shape[0] <= 4:
             channels, height, width = shape
         else:
             height, width, channels = shape

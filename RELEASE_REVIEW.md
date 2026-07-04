@@ -36,7 +36,7 @@ finally:
     self.finished.emit()
 ```
 
-### High: モノクロ 1ch 画像の位置合わせ warp が Bayer 専用処理に落ちる
+### High: モノクロ 1ch 画像の位置合わせ warp が Bayer 専用処理に落ちる (カラーモードごとに処理を分離)
 
 根拠: `src/astro_stacker/alignment/transform.py:30-64`, `src/astro_stacker/io/fits_loader.py:105-107`
 

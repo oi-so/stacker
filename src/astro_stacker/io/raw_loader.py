@@ -31,7 +31,7 @@ def load_raw_info(path: Path) -> AstroImage:
     """
     with rawpy.imread(str(path)) as raw:
         height, width = raw.sizes.height, raw.sizes.width
-        channels = raw.raw_colors
+        channels = 1
 
         pattern = raw.raw_pattern
         if pattern is None:
