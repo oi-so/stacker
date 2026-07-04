@@ -1,5 +1,9 @@
 # Astro Stacker Specification
 
+> 注意: この文書は古い仕様メモを含みます。現行実装の基準は `docs/SPEC.md` と
+> `PROJECT_GUIDE.md` です。特に `AstroImage.load()/unload()`、旧 calibration クラス名、
+> 「高レベル統合が未配線」という記述は現行コードと一致しません。
+
 ## Overview
 Astro Stacker is an astronomical image processing application for stacking, calibration, alignment, and output of astrophotography images. The current implementation contains core I/O, image caching, and calibration scaffolding.
 
@@ -220,4 +224,3 @@ calibrated_image = calibrator.calibrate(raw_image)
 - Add support for dark, flat, bias, and flat-dark frame preparation from raw files.
 - Add calibration integration into the main stacking pipeline.
 - Implement `sigma_clip()` and advanced normalization options.
-
