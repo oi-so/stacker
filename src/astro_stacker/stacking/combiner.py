@@ -10,7 +10,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from astro_stacker.project.settings import StackingMethod
+from astro_stacker.project.settings import StackingMethod, StackingSettings
 from ..core.frame_provider import FrameProvider
 from ..io.image_data import AstroImage
 
@@ -37,6 +37,7 @@ class ImageCombiner:
         self, 
         images: list[AstroImage], 
         method: StackingMethod = StackingMethod.AVERAGE,
+        settings: StackingSettings | None = None,
         progress=None,
         is_cancelled=None,
         combine_msg: str = "スタック画像"
@@ -55,6 +56,8 @@ class ImageCombiner:
         """
         enabled_images = [image for image in images if image.info.enabled]
         logger.info("Combining %d frames with method=%s", len(enabled_images), method)
+        if not enabled_images:
+            raise ValueError("No enabled images provided")
         if method == StackingMethod.AVERAGE:
             return self._average(enabled_images, progress, is_cancelled, combine_msg)
         elif method == StackingMethod.ADD:
@@ -62,7 +65,14 @@ class ImageCombiner:
         elif method == StackingMethod.MEDIAN:
             return self._median(enabled_images, progress, is_cancelled, combine_msg)
         elif method == StackingMethod.SIGMA_CLIP:
-            return self._sigma_clip(enabled_images, progress, is_cancelled, combine_msg)
+            return self._sigma_clip(
+                enabled_images,
+                progress,
+                is_cancelled,
+                combine_msg,
+                sigma=settings.sigma if settings is not None else 3.0,
+                iterations=settings.iterations if settings is not None else 1,
+            )
         else:
             raise ValueError(f"Unknown method: {method}")
         
@@ -268,6 +278,7 @@ class ImageCombiner:
         is_cancelled=None,
         combine_msg="スタック画像",
         sigma=3.0,
+        iterations=1,
     ) -> np.ndarray | None:
         first = self.provider.get_image(images[0])
 
@@ -319,10 +330,11 @@ class ImageCombiner:
                     copy=True,
                 )
 
-                mean = np.mean(chunk, axis=0)
-                std = np.std(chunk, axis=0)
-
-                chunk[np.abs(chunk - mean) > sigma * std] = np.nan
+                for _ in range(max(1, iterations)):
+                    mean = np.nanmean(chunk, axis=0)
+                    std = np.nanstd(chunk, axis=0)
+                    std = np.where(std < 1e-8, 1.0, std)
+                    chunk[np.abs(chunk - mean) > sigma * std] = np.nan
 
                 result[y:y_end] = np.nanmean(chunk, axis=0)
 

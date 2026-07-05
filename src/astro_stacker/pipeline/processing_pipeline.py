@@ -92,7 +92,8 @@ class ProcessingPipeline:
         if not inputs:
             return None
 
-        master = builder.build(inputs, method, progress, is_cancelled, master_type).astype(np.float32, copy=False)
+        settings = getattr(project.settings, f"{master_type.removeprefix('master_')}_frame", None)
+        master = builder.build(inputs, method, settings, progress, is_cancelled, master_type).astype(np.float32, copy=False)
         for frame in inputs:
             frame.info.enabled = False
         self._save_master(project, frames, master, master_type)

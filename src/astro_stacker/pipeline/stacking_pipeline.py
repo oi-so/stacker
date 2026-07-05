@@ -20,6 +20,9 @@ class StackingPipeline:
             if frame.info.enabled and (not project.settings.use_alignment or frame.info.is_aligned)
         ]
 
+        if not frames:
+            raise ValueError("No light frames available for stacking")
+
 
         with timer("StackWorkers", True):
             combiner = ImageCombiner(provider)
@@ -27,6 +30,7 @@ class StackingPipeline:
             result = combiner.combine(
                 frames,
                 settings.method,
+                settings,
                 progress=progress,
                 is_cancelled=is_cancelled,
                 combine_msg="スタック後画像"
