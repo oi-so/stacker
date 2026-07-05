@@ -61,14 +61,10 @@ class PipelineWorker(QObject):
     @Slot()
     def run(self):
         try:
-            logger.info("Worker: pipeline returned")
             self.func(
-                self.progress.emit, 
+                self.progress.emit,
                 lambda: self.cancel_requested
             )
-            logger.info("Worker: before finished.emit")
-            self.finished.emit()
-            logger.info("Worker: after finished.emit")
         except Exception as exc:
             logger.exception("Pipeline failed")
             self.failed.emit(exc)
@@ -148,7 +144,7 @@ class MainWindow(QMainWindow):
         self.progress_label = QLabel("準備完了")
         self.cancel_button = QPushButton("キャンセル")
         self.cancel_button.setEnabled(False)
-        self.cancel_button.clicked.connect(lambda: self._worker.cancel())
+        self.cancel_button.clicked.connect(self._cancel_worker)
 
         progress_layout = QHBoxLayout()
         progress_layout.addWidget(self.progress_label)
@@ -312,6 +308,10 @@ class MainWindow(QMainWindow):
             StarDisplayMode.ALL if index == 0 else StarDisplayMode.ALIGNMENT
         )
         self.viewer.set_star_display_mode(mode)
+
+    def _cancel_worker(self):
+        if self._worker:
+            self._worker.cancel()
 
 
     def _on_add_frames(self, frame_type: FrameType):

@@ -196,14 +196,22 @@ class StackingSettingsDialog(QDialog):
         layout.addRow(alignment_mode_box)
 
 
+        self.sigma_group = QGroupBox("Sigma Clipping 設定")
+        sigma_layout = QFormLayout(self.sigma_group)
+
         self.sigma = QDoubleSpinBox()
         self.sigma.setRange(0.5, 10.0)
         self.sigma.setValue(self.settings.value("stacking/sigma", 3.0, float))
-        layout.addRow("Sigma", self.sigma)
+        sigma_layout.addRow("Sigma", self.sigma)
         self.iterations = QSpinBox()
         self.iterations.setRange(1, 10)
         self.iterations.setValue(self.settings.value("stacking/iterations", 1, int))
-        layout.addRow("繰り返し", self.iterations)
+        sigma_layout.addRow("繰り返し", self.iterations)
+
+        self.method.currentIndexChanged.connect(self._update_sigma_widgets)
+        self._update_sigma_widgets()
+
+        layout.addRow(self.sigma_group)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -221,6 +229,11 @@ class StackingSettingsDialog(QDialog):
         self.project.settings.use_alignment = self.use_alignment_btn.isChecked()
         self.settings.setValue("stacking/use_alignment", self.use_alignment_btn.isChecked())
         super().accept()
+
+    def _update_sigma_widgets(self):
+        method = self.method.currentData()
+        enabled = method == StackingMethod.SIGMA_CLIP
+        self.sigma_group.setEnabled(enabled)
 
 
 class SaveDialog(QDialog):

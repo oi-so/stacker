@@ -17,7 +17,7 @@ Critical は今回確認した範囲ではありません。High はリリース
 
 ## 重要バグ
 
-### High: QThread worker が成功時に `finished` を二重 emit する
+### High: QThread worker が成功時に `finished` を二重 emit する (修正済み)
 
 根拠: `src/astro_stacker/ui/main_window.py:69-76`
 
@@ -36,7 +36,7 @@ finally:
     self.finished.emit()
 ```
 
-### High: モノクロ 1ch 画像の位置合わせ warp が Bayer 専用処理に落ちる
+### High: モノクロ 1ch 画像の位置合わせ warp が Bayer 専用処理に落ちる (カラーモードごとに処理を分離)
 
 根拠: `src/astro_stacker/alignment/transform.py:30-64`, `src/astro_stacker/io/fits_loader.py:105-107`
 
@@ -48,7 +48,7 @@ RGB 以外の 3D 画像を Bayer 分割として扱います。モノクロ FITS
 - `image.ndim == 2` または `image.shape[-1] == 1` は通常の単チャンネル warp にする。
 - Bayer 専用処理は `AstroImage.info.color_mode == ColorMode.BAYER` を見られる provider 側に寄せる。
 
-### High: sigma clipping の UI 設定が実処理に渡らない
+### High: sigma clipping の UI 設定が実処理に渡らない (修正済み)
 
 根拠: `src/astro_stacker/project/settings.py:22-26`, `src/astro_stacker/ui/dialogs.py:199-220`,
 `src/astro_stacker/stacking/combiner.py:64-65`, `src/astro_stacker/stacking/combiner.py:264-327`
