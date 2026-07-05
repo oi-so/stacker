@@ -48,7 +48,7 @@ RGB 以外の 3D 画像を Bayer 分割として扱います。モノクロ FITS
 - `image.ndim == 2` または `image.shape[-1] == 1` は通常の単チャンネル warp にする。
 - Bayer 専用処理は `AstroImage.info.color_mode == ColorMode.BAYER` を見られる provider 側に寄せる。
 
-### High: sigma clipping の UI 設定が実処理に渡らない
+### High: sigma clipping の UI 設定が実処理に渡らない (修正済み)
 
 根拠: `src/astro_stacker/project/settings.py:22-26`, `src/astro_stacker/ui/dialogs.py:199-220`,
 `src/astro_stacker/stacking/combiner.py:64-65`, `src/astro_stacker/stacking/combiner.py:264-327`
