@@ -67,8 +67,6 @@ class ImageTransformer:
             Transformed image with same dtype as input
         """
 
-        print(astro_image.info.color_mode, image.shape)
-
         transform = astro_image.info.transform
 
         if transform is None:
