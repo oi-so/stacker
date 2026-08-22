@@ -1,12 +1,19 @@
-from dataclasses import dataclass, field
-from pathlib import Path
-import numpy as np
-from datetime import datetime
 import uuid
-from typing import Callable
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
+
+import numpy as np
 
 from ..io.image_data import AstroImage
-from ..project.settings import StackingSettings, AlignmentSettings, CalibrationSettings, DebayerTiming
+from ..moving_object.models import MovingObjectSettings
+from ..project.settings import (
+    AlignmentSettings,
+    CalibrationSettings,
+    DebayerTiming,
+    StackingSettings,
+)
 
 
 @dataclass
@@ -14,6 +21,7 @@ class ProjectSettings:
     calibration: CalibrationSettings = field(default_factory=CalibrationSettings)
     alignment: AlignmentSettings = field(default_factory=AlignmentSettings)
     use_alignment: bool = True
+    moving_object: MovingObjectSettings = field(default_factory=MovingObjectSettings)
     debayer_timing: DebayerTiming = DebayerTiming.BEFORE_STACK
 
     light_frame: StackingSettings = field(default_factory=StackingSettings)
@@ -115,8 +123,16 @@ class Project:
     def is_alignment_valid(self) -> bool:
         if (self.alignment_signature != self.make_alignment_signature()):
             return False
+
+        enabled_frames = [frame for frame in self.light_frames if frame.info.enabled]
+        if any(
+            frame.info.alignment_session_id is None or not frame.info.is_aligned
+            for frame in enabled_frames
+        ):
+            return False
+
         sessions = self.get_alignment_sessions()
-        return (len(sessions) == 1 and None not in sessions)
+        return len(sessions) == 1
     
 
     def create_alignment_session(self) -> str:
@@ -134,7 +150,7 @@ class Project:
                     self.reference_image.info.path.name
                     if self.reference_image else None
                 ),
-                created_at=datetime.now(),
+                created_at=datetime.now(UTC),
             )
         )
 
