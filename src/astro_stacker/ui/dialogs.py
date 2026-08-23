@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
 import traceback
+from pathlib import Path
 
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -17,15 +18,16 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QRadioButton,
     QSpinBox,
     QTextEdit,
-    QRadioButton,
     QVBoxLayout,
-    QButtonGroup
 )
 
+from ..io.image_manager import ImageManager
 from ..project.project import Project
 from ..project.settings import AlignmentMode, ReferenceMode, StackingMethod
+from .moving_object_dialog import MovingObjectSettingsDialog
 
 
 class AlignmentSettingsDialog(QDialog):
@@ -154,9 +156,16 @@ class AlignmentSettingsDialog(QDialog):
 
 
 class StackingSettingsDialog(QDialog):
-    def __init__(self, project: Project, parent=None, use_aligned_image: bool | None = None):
+    def __init__(
+        self,
+        project: Project,
+        manager: ImageManager,
+        parent=None,
+        use_aligned_image: bool | None = None,
+    ):
         super().__init__(parent)
         self.project = project
+        self.manager = manager
         self.settings = QSettings("AstroStacker", "AstroStacker")
         self.setWindowTitle("スタック設定")
         layout = QFormLayout(self)
@@ -195,6 +204,28 @@ class StackingSettingsDialog(QDialog):
         alignment_mode_layout.addWidget(self.not_use_alignment_btn)
         layout.addRow(alignment_mode_box)
 
+        basis_box = QGroupBox("スタック基準")
+        basis_layout = QVBoxLayout(basis_box)
+        self.basis_group = QButtonGroup(self)
+        self.star_basis_btn = QRadioButton("恒星基準")
+        self.moving_basis_btn = QRadioButton("移動天体基準（彗星・小惑星など）")
+        self.basis_group.addButton(self.star_basis_btn)
+        self.basis_group.addButton(self.moving_basis_btn)
+        if project.settings.moving_object.enabled:
+            self.moving_basis_btn.setChecked(True)
+        else:
+            self.star_basis_btn.setChecked(True)
+        self.moving_settings_button = QPushButton("赤経・赤緯 / Plate Solve 設定...")
+        self.moving_settings_button.clicked.connect(self._show_moving_object_settings)
+        basis_layout.addWidget(self.star_basis_btn)
+        basis_layout.addWidget(self.moving_basis_btn)
+        basis_layout.addWidget(self.moving_settings_button)
+        layout.addRow(basis_box)
+
+        self.moving_basis_btn.toggled.connect(self._update_moving_widgets)
+        self.use_alignment_btn.toggled.connect(self._update_moving_widgets)
+        self._update_moving_widgets()
+
 
         self.sigma_group = QGroupBox("Sigma Clipping 設定")
         sigma_layout = QFormLayout(self.sigma_group)
@@ -219,6 +250,21 @@ class StackingSettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def accept(self) -> None:
+        if self.moving_basis_btn.isChecked():
+            if not self.use_alignment_btn.isChecked():
+                QMessageBox.warning(
+                    self,
+                    "移動天体スタック",
+                    "移動天体基準スタックでは、アライメント後画像を使用してください。",
+                )
+                return
+            if len(self.project.settings.moving_object.anchors) < 2:
+                QMessageBox.warning(
+                    self,
+                    "移動天体スタック",
+                    "「赤経・赤緯 / Plate Solve 設定...」から座標点を2枚以上設定してください。",
+                )
+                return
         methods = list(StackingMethod.__members__.values())
         self.project.settings.light_frame.method = methods[self.method.currentIndex()]
         self.project.settings.light_frame.sigma = self.sigma.value()
@@ -227,8 +273,24 @@ class StackingSettingsDialog(QDialog):
         self.settings.setValue("stacking/sigma", self.sigma.value())
         self.settings.setValue("stacking/iterations", self.iterations.value())
         self.project.settings.use_alignment = self.use_alignment_btn.isChecked()
+        self.project.settings.moving_object.enabled = self.moving_basis_btn.isChecked()
         self.settings.setValue("stacking/use_alignment", self.use_alignment_btn.isChecked())
         super().accept()
+
+    def _show_moving_object_settings(self) -> None:
+        if not self.project.light_frames:
+            QMessageBox.information(self, "移動天体スタック", "ライトフレームを追加してください。")
+            return
+        MovingObjectSettingsDialog(self.project, self.manager, self).exec()
+
+    def _update_moving_widgets(self) -> None:
+        moving = self.moving_basis_btn.isChecked()
+        self.moving_settings_button.setEnabled(moving)
+        if moving:
+            self.use_alignment_btn.setChecked(True)
+            self.not_use_alignment_btn.setEnabled(False)
+        else:
+            self.not_use_alignment_btn.setEnabled(True)
 
     def _update_sigma_widgets(self):
         method = self.method.currentData()

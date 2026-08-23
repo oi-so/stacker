@@ -1,34 +1,35 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
-from PySide6.QtCore import QObject, QSettings, QThread, Qt, Signal, Slot
+from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QFileDialog,
-    QMainWindow,
-    QProgressBar,
-    QSplitter,
-    QToolBar,
-    QWidget,
-    QVBoxLayout,
-    QLabel,
-    QPushButton,
-    QTabWidget,
-    QHBoxLayout,
-    QMessageBox,
     QCheckBox,
     QComboBox,
+    QFileDialog,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QSplitter,
+    QTabWidget,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
 )
 
-from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
 from ..alignment.transform import ImageTransformer
+from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
 from ..io.image_manager import ImageManager
 from ..io.saver import save_image
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.processing_pipeline import ProcessingPipeline
+from ..platesolve import AstrometryNetSolver, PlateSolveSettings
 from .constants import FrameType
 from .controllers.project_controller import ProjectController
 from .dialogs import (
@@ -86,6 +87,7 @@ class MainWindow(QMainWindow):
         self._worker: PipelineWorker | None = None
         self._aligned = False
         self._stacked = False
+        self._selected_frame = None
         self.preview_provider = PreviewProvider(self.manager, ImageTransformer())
         self.preview_settings = PreviewSettings()
 
@@ -177,7 +179,7 @@ class MainWindow(QMainWindow):
         self.align_action = QAction("▶\n位置合わせ", self)
         self.stack_action = QAction("⚙\nスタック", self)
         self.save_action = QAction("💾\n保存", self)
-        self.platesolve_action = QAction("🔭\nPlate Solve\n(将来実装)", self)
+        self.platesolve_action = QAction("🔭\nPlate Solve", self)
         self.reset_action = QAction("❌\nリセット", self)
         self.platesolve_action.setEnabled(False)
 
@@ -197,6 +199,7 @@ class MainWindow(QMainWindow):
         self.align_action.triggered.connect(self._run_alignment)
         self.stack_action.triggered.connect(self._on_stack)
         self.save_action.triggered.connect(self._save_result)
+        self.platesolve_action.triggered.connect(self._run_plate_solve)
         self.reset_action.triggered.connect(self._reset_project)
 
 
@@ -271,7 +274,7 @@ class MainWindow(QMainWindow):
         self.frame_table.frame_selected.connect(self._preview_frame)
         self.frame_table.enabled_changed.connect(lambda *_: self._update_actions())
         self.frame_table.removed.connect(self.controller.remove_frames)
-        self.frame_table.selection_cleared.connect(lambda: self.viewer.set_image(None))
+        self.frame_table.selection_cleared.connect(lambda *_: self._preview_frame(None))
         self.frame_table.reference_image_requested.connect(self.controller.project.set_reference_image)
 
         def on_reference_changed(image):
@@ -329,6 +332,8 @@ class MainWindow(QMainWindow):
         self.frame_table.set_frames(self.controller.frame_map(), self.controller.project.reference_image)
 
     def _preview_frame(self, image):
+        self._selected_frame = image
+        self._update_actions()
         if image is None:
             self.viewer.set_image(None)
             return
@@ -347,7 +352,15 @@ class MainWindow(QMainWindow):
 
 
     def _show_stack_dialog(self, use_aligned_image: bool | None = None) -> bool:
-        return (StackingSettingsDialog(self.controller.project, self, use_aligned_image=use_aligned_image).exec() == StackingSettingsDialog.DialogCode.Accepted)
+        return (
+            StackingSettingsDialog(
+                self.controller.project,
+                self.manager,
+                self,
+                use_aligned_image=use_aligned_image,
+            ).exec()
+            == StackingSettingsDialog.DialogCode.Accepted
+        )
     
     def _show_alignment_dialog(self) -> bool:
         return (AlignmentSettingsDialog(self.controller.project, self).exec() == AlignmentSettingsDialog.DialogCode.Accepted)
@@ -362,6 +375,42 @@ class MainWindow(QMainWindow):
 
         self._run_worker(work, on_success=self._alignment_finished)
         self.viewer.viewport().update()
+
+    def _run_plate_solve(self):
+        frame = self._selected_frame
+        if frame is None:
+            QMessageBox.information(self, "Plate Solve", "フレーム一覧から画像を選択してください。")
+            return
+
+        settings = PlateSolveSettings(
+            executable=self.settings.value("platesolve/executable", "solve-field", str),
+            downsample=self.settings.value("platesolve/downsample", 2, int),
+            timeout_seconds=self.settings.value("platesolve/timeout", 180, int),
+        )
+        result_holder = {}
+
+        def work(progress, is_cancelled):
+            progress("Plate Solve", 0, 1, frame.info.path.name)
+            result_holder["result"] = AstrometryNetSolver().solve(
+                frame,
+                ImageManagerProvider(self.manager),
+                settings,
+                is_cancelled=is_cancelled,
+            )
+            progress("Plate Solve", 1, 1, frame.info.path.name)
+
+        def succeeded():
+            result = result_holder["result"]
+            frame.info.wcs = result.wcs
+            logger.info(
+                "Plate Solve完了: %s / RA %.6f°, Dec %.6f°, %.3f arcsec/pix",
+                frame.info.path.name,
+                result.center_ra_deg,
+                result.center_dec_deg,
+                result.pixel_scale_arcsec,
+            )
+
+        self._run_worker(work, on_success=succeeded)
 
     def _run_stacking(self):
         if not self._show_stack_dialog():
@@ -466,12 +515,20 @@ class MainWindow(QMainWindow):
 
         self.manager.unload_all()
         self.viewer.set_image(None)
+        self._selected_frame = None
         self._aligned = False
         self._stacked = False
         self._update_actions()
 
     def _set_busy(self, busy: bool):
-        for action in (self.add_action, self.align_action, self.stack_action, self.save_action, self.reset_action):
+        for action in (
+            self.add_action,
+            self.align_action,
+            self.stack_action,
+            self.save_action,
+            self.platesolve_action,
+            self.reset_action,
+        ):
             action.setEnabled(not busy)
         self.frame_table.setEnabled(not busy)
         self.project_tree.setEnabled(not busy)
@@ -481,6 +538,7 @@ class MainWindow(QMainWindow):
         self.align_action.setEnabled(has_lights)
         self.stack_action.setEnabled(has_lights)
         self.save_action.setEnabled(self.controller.project.result.stacked_image is not None)
+        self.platesolve_action.setEnabled(self._selected_frame is not None)
         self.add_action.setEnabled(True)
         self.reset_action.setEnabled(True)
 

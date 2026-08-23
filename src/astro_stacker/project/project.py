@@ -124,13 +124,6 @@ class Project:
         if (self.alignment_signature != self.make_alignment_signature()):
             return False
 
-        enabled_frames = [frame for frame in self.light_frames if frame.info.enabled]
-        if any(
-            frame.info.alignment_session_id is None or not frame.info.is_aligned
-            for frame in enabled_frames
-        ):
-            return False
-
         sessions = self.get_alignment_sessions()
         return len(sessions) == 1
     

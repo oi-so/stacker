@@ -18,6 +18,8 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 - マスター FITS の自動保存と再利用
 - photutils による星検出
 - astroalign による星基準位置合わせ
+- Astrometry.net (`solve-field`) によるローカル Plate Solve
+- 赤経・赤緯アンカーを使った彗星・小惑星などの移動天体基準スタック
 - Average / Median / Add / Sigma Clipping スタック
 - Median / Sigma Clipping 用の一時 memmap 処理
 - スタック結果の `stacked*.fits` 自動保存
@@ -27,12 +29,10 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 
 ## 未実装または制限あり
 
-- Plate Solve
 - Drizzle
 - クロップ範囲選択
 - ホットピクセル除去
 - 比較明合成
-- 彗星や小惑星などの天体基準位置合わせ
 - 重み付きスタック
 - 露出差の正規化 / inverse variance weighting
 - EXIF / WCS メタデータの完全継承
@@ -64,6 +64,22 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 4. 「位置合わせ」または「スタック」を実行する。
 5. スタック完了後、Light フレームのフォルダに `stacked.fits`, `stacked2.fits` のように自動保存される。
 6. 「保存」から任意形式で別名保存できる。
+
+## Plate Solve と移動天体スタック
+
+Plate SolveにはPythonパッケージとは別に、ローカルのAstrometry.net本体と撮影画角に合う
+indexファイルが必要です。`solve-field` がPATHにない場合は、スタック設定内の
+「solve-field」欄に実行ファイルの絶対パスを指定できます。
+
+1. Lightフレームを追加して「位置合わせしてスタック」を選ぶ。
+2. スタック設定の「移動天体基準」を選び、「赤経・赤緯 / Plate Solve 設定...」を開く。
+3. 位置合わせ参照画像を選択し、その行を選んで「選択画像をPlate Solve」を実行する。
+4. 通常は先頭・末尾の「座標点」を有効にして、対象天体の赤経・赤緯を度単位で入力する。
+5. 必要なら中間フレームにも座標点を追加し、設定を確定してスタックを開始する。
+
+ツールバーの「Plate Solve」からも、フレーム一覧で現在選択中の1枚を実行できます。
+Plate Solveしていないフレームは、恒星位置合わせの変換行列と参照画像のWCSから座標を求めるため、
+全画像をPlate Solveする必要はありません。
 
 ## 開発環境
 
