@@ -27,6 +27,7 @@ from ..alignment.transform import ImageTransformer
 from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
 from ..io.image_manager import ImageManager
 from ..io.saver import save_image
+from ..moving_object.marker import moving_object_preview_pixel
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.processing_pipeline import ProcessingPipeline
 from ..platesolve import AstrometryNetSolver, PlateSolveSettings
@@ -340,27 +341,36 @@ class MainWindow(QMainWindow):
 
         try:
             preview = self.preview_provider.get_image(image, self.preview_settings)
+            marker = moving_object_preview_pixel(
+                self.controller.project,
+                image,
+                aligned=self.preview_settings.aligned and image.info.is_aligned,
+                scale_x=preview.scale_x,
+                scale_y=preview.scale_y,
+            )
             self.viewer.set_image(
                 preview.image,
                 preview.all_stars,
                 preview.alignment_stars,
                 preview.scale_x,
-                preview.scale_y
+                preview.scale_y,
+                marker,
                 )
         except Exception as exc:
             ErrorDialog.show_exception(self, "画像表示エラー", exc)
 
 
     def _show_stack_dialog(self, use_aligned_image: bool | None = None) -> bool:
-        return (
-            StackingSettingsDialog(
-                self.controller.project,
-                self.manager,
-                self,
-                use_aligned_image=use_aligned_image,
-            ).exec()
-            == StackingSettingsDialog.DialogCode.Accepted
+        dialog = StackingSettingsDialog(
+            self.controller.project,
+            self.manager,
+            self,
+            use_aligned_image=use_aligned_image,
         )
+        accepted = dialog.exec() == StackingSettingsDialog.DialogCode.Accepted
+        if self._selected_frame is not None:
+            self._preview_frame(self._selected_frame)
+        return accepted
     
     def _show_alignment_dialog(self) -> bool:
         return (AlignmentSettingsDialog(self.controller.project, self).exec() == AlignmentSettingsDialog.DialogCode.Accepted)
@@ -409,6 +419,8 @@ class MainWindow(QMainWindow):
                 result.center_dec_deg,
                 result.pixel_scale_arcsec,
             )
+            if self._selected_frame is frame:
+                self._preview_frame(frame)
 
         self._run_worker(work, on_success=succeeded)
 

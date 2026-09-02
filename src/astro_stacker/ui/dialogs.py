@@ -215,7 +215,7 @@ class StackingSettingsDialog(QDialog):
             self.moving_basis_btn.setChecked(True)
         else:
             self.star_basis_btn.setChecked(True)
-        self.moving_settings_button = QPushButton("赤経・赤緯 / Plate Solve 設定...")
+        self.moving_settings_button = QPushButton("赤経・赤緯 / カタログ / Plate Solve 設定...")
         self.moving_settings_button.clicked.connect(self._show_moving_object_settings)
         basis_layout.addWidget(self.star_basis_btn)
         basis_layout.addWidget(self.moving_basis_btn)
@@ -262,7 +262,7 @@ class StackingSettingsDialog(QDialog):
                 QMessageBox.warning(
                     self,
                     "移動天体スタック",
-                    "「赤経・赤緯 / Plate Solve 設定...」から座標点を2枚以上設定してください。",
+                    "移動天体設定から手入力座標またはカタログ天体を設定してください。",
                 )
                 return
         methods = list(StackingMethod.__members__.values())
@@ -280,6 +280,11 @@ class StackingSettingsDialog(QDialog):
     def _show_moving_object_settings(self) -> None:
         if not self.project.light_frames:
             QMessageBox.information(self, "移動天体スタック", "ライトフレームを追加してください。")
+            return
+        if not any(frame.info.enabled for frame in self.project.light_frames):
+            QMessageBox.information(
+                self, "移動天体スタック", "有効なライトフレームがありません。"
+            )
             return
         MovingObjectSettingsDialog(self.project, self.manager, self).exec()
 
