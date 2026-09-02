@@ -26,6 +26,7 @@ class ImageViewer(QGraphicsView):
         self._all_stars: StarCatalog | None = None
         self._alignment_stars: StarCatalog | None = None
         self._star_display_mode = StarDisplayMode.NONE
+        self._moving_object_marker: tuple[float, float] | None = None
 
         self._display_scale_x = 1.0
         self._display_scale_y = 1.0
@@ -58,8 +59,6 @@ class ImageViewer(QGraphicsView):
         else:
             catalog = self._alignment_stars
 
-        if catalog is None: return
-
         radius = 8
 
         pen = painter.pen()
@@ -69,14 +68,25 @@ class ImageViewer(QGraphicsView):
             pen.setColor(Qt.GlobalColor.red)
         painter.setPen(pen)
 
-        for star in catalog.stars:
-            x = star.x * self._display_scale_x
-            y = star.y * self._display_scale_y
-            painter.drawEllipse(
-                QPointF(x, y),
-                radius,
-                radius,
-            )
+        if catalog is not None:
+            for star in catalog.stars:
+                x = star.x * self._display_scale_x
+                y = star.y * self._display_scale_y
+                painter.drawEllipse(
+                    QPointF(x, y),
+                    radius,
+                    radius,
+                )
+
+        if self._moving_object_marker is not None:
+            x, y = self._moving_object_marker
+            pen.setColor(Qt.GlobalColor.cyan)
+            pen.setWidth(2)
+            painter.setPen(pen)
+            marker_radius = 13
+            painter.drawEllipse(QPointF(x, y), marker_radius, marker_radius)
+            painter.drawLine(QPointF(x - 20, y), QPointF(x + 20, y))
+            painter.drawLine(QPointF(x, y - 20), QPointF(x, y + 20))
 
     
     def fit_image(self):
@@ -111,11 +121,20 @@ class ImageViewer(QGraphicsView):
         )
 
 
-    def set_image(self, image: np.ndarray | None, all_stars: StarCatalog | None = None, alignment_stars: StarCatalog | None = None, star_scale_x: float = 1.0, star_scale_y: float = 1.0) -> None:
+    def set_image(
+        self,
+        image: np.ndarray | None,
+        all_stars: StarCatalog | None = None,
+        alignment_stars: StarCatalog | None = None,
+        star_scale_x: float = 1.0,
+        star_scale_y: float = 1.0,
+        moving_object_marker: tuple[float, float] | None = None,
+    ) -> None:
         self._all_stars = all_stars
         self._alignment_stars = alignment_stars
         self._display_scale_x = star_scale_x
         self._display_scale_y = star_scale_y
+        self._moving_object_marker = moving_object_marker
         need_fits_image = False
         if self._pixmap_item is None: need_fits_image = True
         # self.scene.clear()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 
@@ -33,8 +34,26 @@ class MovingObjectAnchor:
         return SkyPosition(self.ra_deg, self.dec_deg)
 
 
+class MovingObjectMode(StrEnum):
+    MANUAL = "manual"
+    CATALOG = "catalog"
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogObject:
+    """A selected JPL Small-Body Database object."""
+
+    designation: str
+    fullname: str
+    spk_id: str | None = None
+    kind: str | None = None
+
+
 @dataclass(slots=True)
 class MovingObjectSettings:
     enabled: bool = False
+    mode: MovingObjectMode = MovingObjectMode.MANUAL
     anchors: list[MovingObjectAnchor] = field(default_factory=list)
     reference_frame_path: Path | None = None
+    catalog_object: CatalogObject | None = None
+    observer_code: str = "500"

@@ -172,6 +172,9 @@ class AstroImageInfo(SerializableMixin):
     f_number: float | None = None
 
     exif: dict | None = None
+    # User-corrected exposure start in UTC.  The original EXIF/FITS value is
+    # kept untouched so a whole sequence can be re-based again later.
+    capture_time_override_utc: str | None = None
     wcs: WCSData = field(default_factory=WCSData)
     score_data: ScoreData = field(default_factory=ScoreData)
     transform: TransformData = field(default_factory=TransformData)

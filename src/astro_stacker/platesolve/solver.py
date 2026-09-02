@@ -24,6 +24,9 @@ class PlateSolveSettings:
     timeout_seconds: int = 180
     scale_low: float | None = None
     scale_high: float | None = None
+    center_ra_deg: float | None = None
+    center_dec_deg: float | None = None
+    search_radius_deg: float = 8.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,6 +153,21 @@ class AstrometryNetSolver:
                     str(settings.scale_low),
                     "--scale-high",
                     str(settings.scale_high),
+                ]
+            )
+        if settings.center_ra_deg is not None and settings.center_dec_deg is not None:
+            if not -90.0 <= settings.center_dec_deg <= 90.0:
+                raise ValueError("Plate Solveの探索中心赤緯が不正です。")
+            if not 0.0 < settings.search_radius_deg <= 180.0:
+                raise ValueError("Plate Solveの探索半径が不正です。")
+            command.extend(
+                [
+                    "--ra",
+                    str(settings.center_ra_deg % 360.0),
+                    "--dec",
+                    str(settings.center_dec_deg),
+                    "--radius",
+                    str(settings.search_radius_deg),
                 ]
             )
         command.append(str(input_path))
