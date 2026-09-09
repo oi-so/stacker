@@ -15,7 +15,7 @@ from .standard_loader import load_standard_image, load_standard_info
 
 # File extension sets for each loader
 RAW_EXTENSIONS = {
-    '.cr2', '.nef', '.arw', '.dng', '.rw2', '.orf', '.raf', '.pef', '.srw',
+    '.cr2', '.cr3', '.nef', '.arw', '.dng', '.rw2', '.orf', '.raf', '.pef', '.srw',
     '.srf', '.sr2', '.kdc', '.mos', '.mrw', '.mef', '.erf', '.x3f',
     '.bay', '.cap', '.iiq', '.rwl', '.raw'
 }
@@ -72,4 +72,4 @@ def load_image(astro_image: AstroImage) -> np.ndarray:
         image = load_standard_image(path)
 
     image = np.asarray(image, dtype=np.float32)
-    return np.clip(image, 0, None)
+    return image  # Format loaders already return non-negative float32 data.

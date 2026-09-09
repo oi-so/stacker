@@ -8,6 +8,9 @@ class StackingMethod(StrEnum):
     MEDIAN = "median"
     ADD = "add"
     SIGMA_CLIP = "sigma_clip"
+    MAXIMUM = "maximum"
+    MINIMUM = "minimum"
+    MINMAX_MEAN = "minmax_mean"
 
     @property
     def show_name(self) -> str:
@@ -16,6 +19,9 @@ class StackingMethod(StrEnum):
             StackingMethod.MEDIAN: "Median",
             StackingMethod.ADD: "Add",
             StackingMethod.SIGMA_CLIP: "Sigma Clipping",
+            StackingMethod.MAXIMUM: "比較明 (Maximum)",
+            StackingMethod.MINIMUM: "比較暗 (Minimum)",
+            StackingMethod.MINMAX_MEAN: "最大・最小除外平均",
         }[self]
 
 

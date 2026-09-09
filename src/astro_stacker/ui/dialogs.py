@@ -174,6 +174,12 @@ class StackingSettingsDialog(QDialog):
             self.method.addItem(method.show_name, method)
         current = self.settings.value("stacking/method", project.settings.light_frame.method)
         self.method.setCurrentIndex(self.method.findData(current))
+        self.method.setToolTip(
+            "Average: 高速な平均 / Median: 外れ値に強い中央値 / Add: 加算\n"
+            "Sigma Clipping: σで外れ値を除外\n"
+            "比較明・比較暗: 各画素・チャンネルの最大値・最小値\n"
+            "最大・最小除外平均: 各画素で最大・最小を1個ずつ除いて平均（3枚以上）"
+        )
         layout.addRow("スタック方法", self.method)
 
 

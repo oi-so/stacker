@@ -113,4 +113,4 @@ def load_fits_image(path: Path) -> np.ndarray:
             data = np.moveaxis(data, 0, -1)
 
     data = np.asarray(data, dtype=np.float32)
-    return np.clip(data, 0, None)
+    return np.clip(data, 0, None, out=data)

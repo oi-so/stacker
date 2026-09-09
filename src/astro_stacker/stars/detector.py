@@ -19,6 +19,17 @@ def to_luminance(image):
     return image.mean(axis=2)
 
 
+def background_stats(image: np.ndarray):
+    """Estimate the background from a spatial grid of at most 512² pixels."""
+    image = to_luminance(image)
+    sy = max(1, (image.shape[0] + 511) // 512)
+    sx = max(1, (image.shape[1] + 511) // 512)
+    # Odd strides sample both phases of a Bayer mosaic.
+    sy += (sy % 2 == 0)
+    sx += (sx % 2 == 0)
+    return sigma_clipped_stats(image[::sy, ::sx])
+
+
 def detect_stars(image: np.ndarray, fwhm: float = 4.0, sigma: float = 5.0) -> StarCatalog:
     """
     Search stars and return stars catalog.
@@ -33,7 +44,7 @@ def detect_stars(image: np.ndarray, fwhm: float = 4.0, sigma: float = 5.0) -> St
         Finding star brightness
     """
     image = to_luminance(image)
-    _, median, std = sigma_clipped_stats(image)
+    _, median, std = background_stats(image)
 
     finder = DAOStarFinder(
         fwhm=fwhm,

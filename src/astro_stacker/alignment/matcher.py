@@ -28,12 +28,12 @@ def find_transform(
     """
     ref_points = np.array([
         [s.x, s.y]
-        for s in reference.stars
+        for s in reference.brightest(50).stars
     ])
 
     tgt_points = np.array([
         [s.x, s.y]
-        for s in target.stars
+        for s in target.brightest(50).stars
     ])
 
     if len(ref_points) < 3 or len(tgt_points) < 3:

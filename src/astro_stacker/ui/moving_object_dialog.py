@@ -208,6 +208,15 @@ class MovingObjectSettingsDialog(QDialog):
         self.downsample.setValue(self.app_settings.value("platesolve/downsample", 2, int))
         form.addRow("solve-field", self.executable)
         form.addRow("Downsample", self.downsample)
+        self.auto_downsample = QCheckBox("大画像の星抽出を自動縮小する")
+        self.auto_downsample.setChecked(
+            self.app_settings.value("platesolve/auto_downsample", True, bool)
+        )
+        self.auto_downsample.setToolTip(
+            "星抽出時の長辺を約2048画素以下にします。星が少なく解けない場合はオフにし、"
+            "Downsampleを1または2にしてください。WCSは元画像の座標で返します。"
+        )
+        form.addRow(self.auto_downsample)
         layout.addLayout(form)
 
         self.table = QTableWidget(len(self.frames), 6)
@@ -483,12 +492,14 @@ class MovingObjectSettingsDialog(QDialog):
         settings = PlateSolveSettings(
             executable=self.executable.text().strip() or "solve-field",
             downsample=self.downsample.value(),
+            auto_downsample=self.auto_downsample.isChecked(),
             center_ra_deg=ra_widget.value() if use_hint else None,
             center_dec_deg=dec_widget.value() if use_hint else None,
             search_radius_deg=8.0,
         )
         self.app_settings.setValue("platesolve/executable", settings.executable)
         self.app_settings.setValue("platesolve/downsample", settings.downsample)
+        self.app_settings.setValue("platesolve/auto_downsample", settings.auto_downsample)
 
         self.solve_button.setEnabled(False)
         self.solve_status.setText(f"実行中: {frame.info.path.name}")

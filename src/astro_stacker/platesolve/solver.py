@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +27,7 @@ class PlateSolveSettings:
     center_ra_deg: float | None = None
     center_dec_deg: float | None = None
     search_radius_deg: float = 8.0
+    auto_downsample: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,13 @@ class AstrometryNetSolver:
         is_cancelled: Callable[[], bool] | None = None,
     ) -> PlateSolveResult:
         settings = settings or PlateSolveSettings()
+        if is_cancelled and is_cancelled():
+            raise RuntimeError("Plate Solveをキャンセルしました。")
+        token = getattr(provider, "cache_token", None)
+        key = (token(frame), settings) if token is not None else None
+        cached = getattr(frame, "_plate_solve_cache", None)
+        if key is not None and cached is not None and cached[0] == key:
+            return replace(cached[1], wcs=cached[1].wcs.deepcopy())
         executable = self._find_executable(settings.executable)
         image = self._as_mono(provider.get_image(frame))
 
@@ -58,7 +66,15 @@ class AstrometryNetSolver:
             solved_path = work_dir / "solution.solved"
             fits.writeto(input_path, image, overwrite=True)
 
-            command = self._command(executable, input_path, wcs_path, solved_path, settings)
+            # Let solve-field downsample so its WCS remains in original pixels.
+            effective = replace(
+                settings,
+                downsample=max(
+                    settings.downsample,
+                    (max(image.shape) + 2047) // 2048 if settings.auto_downsample else 1,
+                ),
+            )
+            command = self._command(executable, input_path, wcs_path, solved_path, effective)
             log_path = work_dir / "solve-field.log"
             with log_path.open("w+", encoding="utf-8") as log_file:
                 process = subprocess.Popen(
@@ -86,12 +102,16 @@ class AstrometryNetSolver:
         ra, dec = wcs.pixel_to_world_values((width - 1) / 2.0, (height - 1) / 2.0)
         scales = np.asarray(proj_plane_pixel_scales(wcs), dtype=np.float64) * 3600.0
         pixel_scale = float(np.mean(np.abs(scales)))
-        return PlateSolveResult(
+        result = PlateSolveResult(
             wcs=wcs,
             center_ra_deg=float(np.asarray(ra)) % 360.0,
             center_dec_deg=float(np.asarray(dec)),
             pixel_scale_arcsec=pixel_scale,
         )
+
+        if key is not None:
+            frame._plate_solve_cache = (key, replace(result, wcs=result.wcs.deepcopy()))
+        return result
 
     @staticmethod
     def _find_executable(value: str) -> str:
@@ -117,9 +137,9 @@ class AstrometryNetSolver:
             mono = np.mean(data[..., :3], axis=-1)
         else:
             raise ValueError(f"Plate Solve非対応の画像形状です: {data.shape}")
-        mono = np.array(mono, dtype=np.float32, copy=True)
+        mono = np.asarray(mono, dtype=np.float32)
         if not np.all(np.isfinite(mono)):
-            mono = np.nan_to_num(mono, copy=False)
+            mono = np.nan_to_num(mono, copy=True)
         return mono
 
     @staticmethod
@@ -135,6 +155,14 @@ class AstrometryNetSolver:
             "--overwrite",
             "--no-plots",
             "--no-verify",
+            "--new-fits",
+            "none",
+            "--match",
+            "none",
+            "--rdls",
+            "none",
+            "--corr",
+            "none",
             "--downsample",
             str(max(1, settings.downsample)),
             "--wcs",
@@ -187,6 +215,7 @@ class AstrometryNetSolver:
                     process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill()
+                    process.wait()
                 raise RuntimeError("Plate Solveをキャンセルしました。")
             if time.monotonic() >= deadline:
                 process.kill()

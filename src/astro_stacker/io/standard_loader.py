@@ -34,7 +34,7 @@ def load_standard_info(path: Path) -> AstroImage:
             color_mode = ColorMode.RGB
 
         with open(path, 'rb') as f:
-            exif_data = exifread.process_file(f)
+            exif_data = exifread.process_file(f, details=False)
         return AstroImage(
             info=AstroImageInfo(
                 path=path,
@@ -70,4 +70,4 @@ def load_standard_image(path: Path) -> np.ndarray:
             # Use a 16-bit working range for 8-bit standard images so preview
             # and calibration math operate on the same nominal range.
             data *= 257.0
-        return np.clip(data, 0, None)
+        return np.clip(data, 0, None, out=data)

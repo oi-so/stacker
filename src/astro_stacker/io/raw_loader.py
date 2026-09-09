@@ -50,7 +50,7 @@ def load_raw_info(path: Path) -> AstroImage:
         cfa_type = mapping.get(key, CFAType.NONE)
 
         with open(str(path), 'rb') as f:
-            exif_data = exifread.process_file(f)
+            exif_data = exifread.process_file(f, details=False)
         return AstroImage(
             info=AstroImageInfo(
                 path=path,
@@ -83,7 +83,7 @@ def load_raw_image(path: Path) -> np.ndarray:
 
         if data.ndim == 2:
             data = data[..., np.newaxis]
-        return np.clip(data, 0, None)
+        return np.clip(data, 0, None, out=data)
 
 
 def load_raw_rgb_image(path: Path) -> np.ndarray:

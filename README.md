@@ -20,8 +20,8 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 - astroalign による星基準位置合わせ
 - Astrometry.net (`solve-field`) によるローカル Plate Solve
 - 赤経・赤緯アンカーを使った彗星・小惑星などの移動天体基準スタック
-- Average / Median / Add / Sigma Clipping スタック
-- Median / Sigma Clipping 用の一時 memmap 処理
+- Average / Median / Add / Sigma Clipping / 比較明 / 比較暗 / 最大・最小除外平均スタック
+- 容量制限付き画像キャッシュと、RAM / 一時 memmap を使い分けるスタック処理
 - スタック結果の `stacked*.fits` 自動保存
 - 画像プレビュー、ズーム、検出星の表示
 - QThread による pipeline の非同期実行
@@ -32,13 +32,11 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 - Drizzle
 - クロップ範囲選択
 - ホットピクセル除去
-- 比較明合成
 - 重み付きスタック
 - 露出差の正規化 / inverse variance weighting
 - EXIF / WCS メタデータの完全継承
 - 言語切り替えの即時反映
 - プロジェクトファイルの完全保存/復元
-- Sigma Clipping の繰り返し回数反映
 - 参照画像の「最高品質」自動選択
 
 ## 対応ファイル形式
@@ -125,9 +123,9 @@ uv run mypy src
 
 - 現行のロード責務は `AstroImage.load()` ではなく `ImageManager.get_image()` にあります。
 - 画像配列は原則 `np.float32` かつ非負値です。
-- Median / Sigma Clipping はメモリ節約のため一時 memmap を使いますが、ディスク容量はフレーム総量分必要です。
+- 画像キャッシュは256MiB、スタック一時ファイルは最大8GiB・SSD空き8GiB確保が既定値です。[処理速度とリソース設定](docs/PERFORMANCE.md)を参照してください。
 - `docs/specification.md` は古い仕様メモです。現行仕様は `docs/SPEC.md` を優先してください。
-- `tests/` には手元画像や絶対パスに依存する実験スクリプトが残っています。CI 用テスト整備はリリース前課題です。
+- `uv run pytest` は外部画像不要の `tests/regression/` を実行します。従来のローカル画像依存スクリプトは自動収集対象外です。
 
 ## ライセンス
 

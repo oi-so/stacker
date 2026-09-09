@@ -396,6 +396,7 @@ class MainWindow(QMainWindow):
             executable=self.settings.value("platesolve/executable", "solve-field", str),
             downsample=self.settings.value("platesolve/downsample", 2, int),
             timeout_seconds=self.settings.value("platesolve/timeout", 180, int),
+            auto_downsample=self.settings.value("platesolve/auto_downsample", True, bool),
         )
         result_holder = {}
 

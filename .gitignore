@@ -21,7 +21,8 @@ build/
 .DS_Store
 
 test_images
-tests
+tests/*
+!tests/regression/
 
 app.dist
 app.build

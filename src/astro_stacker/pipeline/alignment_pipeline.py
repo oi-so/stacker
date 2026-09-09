@@ -1,5 +1,4 @@
 import logging
-import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import numpy as np
@@ -7,6 +6,7 @@ import numpy as np
 from ..alignment.aligner import align_catalogs, compose_alignment_transforms
 from ..alignment.detection import process_frame
 from ..core.frame_provider import FrameProvider
+from ..core.resources import alignment_workers
 from ..io.image_data import AlignmentData, TransformData
 from ..project.project import Project
 from ..project.settings import AlignmentMode, AlignmentSettings, ReferenceMode
@@ -14,8 +14,6 @@ from ..utils.timer import timer
 
 logger = logging.getLogger(__name__)
 
-cpu = os.cpu_count()
-MAX_WORKERS: int | None = cpu - 1 if cpu else None
 MAX_NEIGHBOR_REFERENCE_DISTANCE = 10
 
 
@@ -101,11 +99,18 @@ class AlignmentPipeline:
             )
             reference.info.stars.all_stars = reference_result.catalog
             reference.info.score_data = reference_result.score_data
+            reference.info.stars.alignment_stars = getattr(
+                reference_result, "alignment_catalog", reference_result.catalog,
+            )
 
-            detected_catalogs = {reference.info.path: reference_result.catalog}
+            detected_catalogs = {reference.info.path: reference.info.stars.alignment_stars}
             detection_finished = 1 if reference in frames_to_align else 0
 
-            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            shape = reference.info.shape
+            frame_bytes = shape.width * shape.height * max(1, shape.channels) * 4
+            workers = alignment_workers(frame_bytes)
+            logger.info("Star detection workers: %d", workers)
+            with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {
                     executor.submit(
                         process_frame,
@@ -120,6 +125,8 @@ class AlignmentPipeline:
 
                 for future in as_completed(futures):
                     if is_cancelled and is_cancelled():
+                        for pending in futures:
+                            pending.cancel()
                         return
 
                     frame = futures[future]
@@ -140,7 +147,10 @@ class AlignmentPipeline:
 
                     frame.info.stars.all_stars = detection.catalog
                     frame.info.score_data = detection.score_data
-                    detected_catalogs[frame.info.path] = detection.catalog
+                    frame.info.stars.alignment_stars = getattr(
+                        detection, "alignment_catalog", detection.catalog,
+                    )
+                    detected_catalogs[frame.info.path] = frame.info.stars.alignment_stars
 
             if is_cancelled and is_cancelled():
                 return

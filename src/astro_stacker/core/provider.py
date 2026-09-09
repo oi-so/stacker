@@ -43,6 +43,9 @@ class ImageManagerProvider:
         """
         self.manager = manager
 
+    def cache_token(self, astro_image: AstroImage):
+        return self.manager.cache_key(astro_image)
+
     def get_image(self, astro_image: AstroImage) -> np.ndarray:
         """Get image data using ImageManager."""
         return self.manager.get_image(astro_image)
