@@ -1,5 +1,5 @@
-"""
-Plate solving module for Astro Stacker
-"""
+"""Local plate-solving support."""
 
-__all__ = []
+from .solver import AstrometryNetSolver, PlateSolveResult, PlateSolveSettings
+
+__all__ = ["AstrometryNetSolver", "PlateSolveResult", "PlateSolveSettings"]
