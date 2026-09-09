@@ -18,6 +18,8 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 - マスター FITS の自動保存と再利用
 - photutils による星検出
 - astroalign による星基準位置合わせ
+- Astrometry.net (`solve-field`) によるローカル Plate Solve
+- 赤経・赤緯アンカーを使った彗星・小惑星などの移動天体基準スタック
 - Average / Median / Add / Sigma Clipping スタック
 - Median / Sigma Clipping 用の一時 memmap 処理
 - スタック結果の `stacked*.fits` 自動保存
@@ -27,12 +29,10 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 
 ## 未実装または制限あり
 
-- Plate Solve
 - Drizzle
 - クロップ範囲選択
 - ホットピクセル除去
 - 比較明合成
-- 彗星や小惑星などの天体基準位置合わせ
 - 重み付きスタック
 - 露出差の正規化 / inverse variance weighting
 - EXIF / WCS メタデータの完全継承
@@ -65,20 +65,61 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 5. スタック完了後、Light フレームのフォルダに `stacked.fits`, `stacked2.fits` のように自動保存される。
 6. 「保存」から任意形式で別名保存できる。
 
+## Plate Solve と移動天体スタック
+
+Plate SolveにはPythonパッケージとは別に、ローカルのAstrometry.net本体と撮影画角に合う
+indexファイルが必要です。`solve-field` がPATHにない場合は、スタック設定内の
+「solve-field」欄に実行ファイルの絶対パスを指定できます。
+
+1. Lightフレームを追加して「位置合わせしてスタック」を選ぶ。
+2. スタック設定の「移動天体基準」を選び、「赤経・赤緯 / カタログ / Plate Solve 設定...」を開く。
+3. 先頭画像の撮影開始時刻だけを必要に応じて修正する。元の時刻が揃っていれば各画像の実間隔を維持し、欠損時は指定した一定間隔で全画像を自動補完する。
+4. 次のどちらかで天体位置を設定する。
+   - 手入力: 先頭・末尾など2枚以上にICRS/J2000赤経・赤緯（度）を入力する。
+   - カタログ: NASA/JPL SBDBから彗星・小惑星を検索し、Horizonsで全露光中央時刻の見かけ位置を計算する（インターネット接続が必要）。
+5. 中央付近の位置合わせ参照画像を選び、「基準画像をPlate Solve（推奨設定）」を実行する。天体位置が計算済みなら8度の探索範囲ヒントを使う。
+6. 移動天体を固定したい時刻の画像を選び、設定を確定してスタックを開始する。
+
+ツールバーの「Plate Solve」からも、フレーム一覧で現在選択中の1枚を実行できます。
+Plate Solveしていないフレームは、恒星位置合わせの変換行列と参照画像のWCSから座標を求めるため、
+全画像をPlate Solveする必要はありません。
+星マーカーを表示すると、全星/位置合わせ星に加えて予測された移動天体位置がシアンの十字円で表示されます。手入力とカタログの両モードに対応します。
+
 ## 開発環境
 
-Python 3.12 以上を想定しています。
+依存関係と仮想環境は [uv](https://docs.astral.sh/uv/getting-started/installation/) で管理します。
+uv をインストール後、プロジェクトのルートで実行してください。
+標準の Python バージョンは `.python-version` で 3.12 に指定しています。
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m astro_stacker
+uv sync --locked
+uv run astro-stacker
 ```
 
-または:
+`uv sync --locked` は `uv.lock` に固定された依存関係と開発用ツールを `.venv` にインストールします。
+Python 3.12 が見つからない場合は uv が自動で取得します。
+仮想環境の手動有効化や `PYTHONPATH` の設定は不要です。
+モジュール形式で起動する場合は `uv run python -m astro_stacker` も使えます。
+
+アプリの実行用依存関係だけをインストールする場合:
 
 ```bash
-astro-stacker
+uv sync --locked --no-dev
+uv run --no-dev astro-stacker
 ```
+
+開発用コマンド:
+
+```bash
+uv run pytest
+uv run ruff check src
+uv run black --check src
+uv run mypy src
+```
+
+依存関係の追加は `uv add パッケージ名`、開発用は `uv add --dev パッケージ名` を使います。
+`pyproject.toml` を直接編集した場合は `uv lock` でロックファイルを更新し、`uv sync --locked` で反映してください。
+`pyproject.toml`、`uv.lock`、`.python-version` は一緒にバージョン管理します。
 
 ## 開発者向けメモ
 

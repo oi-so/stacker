@@ -1,11 +1,10 @@
 """Apply alignment transformations to images."""
 
-from skimage.transform import SimilarityTransform, warp
 import numpy as np
+from skimage.transform import SimilarityTransform, warp
 
-from ..io.image_data import AstroImage, ColorMode, TransformData
 from ..core.frame_provider import FrameProvider
-
+from ..io.image_data import AstroImage, ColorMode, TransformData
 
 
 class ImageTransformer:
@@ -55,7 +54,8 @@ class ImageTransformer:
     def apply_transform(
         self,
         image: np.ndarray,
-        astro_image: AstroImage
+        astro_image: AstroImage,
+        transform: TransformData | None = None,
     ) -> np.ndarray:
         """Apply pre-computed transformation to an image.
         
@@ -67,7 +67,8 @@ class ImageTransformer:
             Transformed image with same dtype as input
         """
 
-        transform = astro_image.info.transform
+        if transform is None:
+            transform = astro_image.info.transform
 
         if transform is None:
             return image.astype(np.float32, copy=False)
