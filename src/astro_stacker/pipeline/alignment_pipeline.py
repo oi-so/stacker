@@ -251,3 +251,5 @@ class AlignmentPipeline:
                     )
 
             project.alignment_signature = project.make_alignment_signature()
+            from ..io.history import save_alignment_history
+            save_alignment_history(project)

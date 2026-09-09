@@ -70,4 +70,12 @@ class StackingPipeline:
             )
 
             project.result.stacked_image = result
+            from ..metadata.stacked import stack_metadata
+            project.result.metadata = stack_metadata(frames, settings.method) if result is not None else {}
+            # Reuse the reference WCS only when output pixels use that grid.
+            reference = project.reference_image
+            if result is not None and project.settings.use_alignment and not moving_object.enabled and reference:
+                wcs = reference.info.wcs
+                if getattr(wcs, "has_celestial", False):
+                    project.result.metadata.update(dict(wcs.to_header(relax=True)))
             return

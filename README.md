@@ -27,6 +27,12 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 - QThread による pipeline の非同期実行
 - Python logging を GUI ログパネルへ表示
 
+## プロジェクト保存とEXIF
+
+「ファイル → プロジェクトを保存」で、画像一覧・使用チェック・位置合わせ・Plate Solve・処理設定・表示状態を `.astrostacker` に保存できます。画像ごとの解析履歴は隣の `.astrostacker.json` に自動保存し、再読込時に利用します。
+
+スタック出力には総露出時間、最頻値のISO・F値と、混在条件の内訳を記録します。操作と復元条件は[プロジェクト保存とメタデータ](docs/PROJECTS_AND_METADATA.md)を参照してください。
+
 ## 未実装または制限あり
 
 - Drizzle
@@ -34,9 +40,8 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 - ホットピクセル除去
 - 重み付きスタック
 - 露出差の正規化 / inverse variance weighting
-- EXIF / WCS メタデータの完全継承
+- 元画像のMakerNoteなど独自EXIFの完全継承
 - 言語切り替えの即時反映
-- プロジェクトファイルの完全保存/復元
 - 参照画像の「最高品質」自動選択
 
 ## 対応ファイル形式

@@ -40,7 +40,7 @@ class AlignmentSettingsDialog(QDialog):
 
         self.timing = QComboBox()
         self.timing.addItems(["位置合わせ前", "位置合わせ後"])
-        self.timing.setCurrentIndex(0 if self.settings.value("alignment/calibrate_before", True, bool) else 1)
+        self.timing.setCurrentIndex(0 if project.settings.alignment.calibrate_before_align else 1)
         layout.addRow("キャリブレーション", self.timing)
 
         self.use_dark = QCheckBox("Dark")
@@ -53,7 +53,7 @@ class AlignmentSettingsDialog(QDialog):
             ("calibration/use_flats", self.use_flat),
             ("calibration/use_flat_darks", self.use_flat_dark),
         ]:
-            box.setChecked(self.settings.value(key, True, bool))
+            box.setChecked(getattr(project.settings.calibration, key.split("/")[1]))
         calibration_box = QGroupBox()
         calibration_layout = QHBoxLayout(calibration_box)
         for box in (self.use_dark, self.use_bias, self.use_flat, self.use_flat_dark):
@@ -66,7 +66,7 @@ class AlignmentSettingsDialog(QDialog):
         sessions = project.get_alignment_sessions()
         has_session = len(sessions) == 1
         self.mode_new.setEnabled(has_session)
-        if self.settings.value("alignment/mode", "all") == "new_only" and has_session:
+        if project.settings.alignment.mode == "new_only" and has_session:
             self.mode_new.setChecked(True)
         else:
             self.mode_all.setChecked(True)
@@ -80,7 +80,7 @@ class AlignmentSettingsDialog(QDialog):
 
         self.reference = QComboBox()
         self.reference.addItems(["自動（中央）", "自動（最高品質）", "手動選択"])
-        self.reference.setCurrentIndex(self.settings.value("alignment/reference", 0, int))
+        self.reference.setCurrentIndex(list(ReferenceMode).index(project.settings.alignment.reference_mode))
 
         self.manual_reference = QComboBox()
         for frame in project.light_frames:
@@ -99,7 +99,7 @@ class AlignmentSettingsDialog(QDialog):
                 if index >= 0:
                     self.manual_reference.setCurrentIndex(index)
             elif not project.reference_image.info.enabled:
-                if self.settings.value("alignment/reference", 0, int) == 2:
+                if list(ReferenceMode).index(project.settings.alignment.reference_mode) == 2:
                     self.reference.setCurrentIndex(0)
 
 
@@ -109,12 +109,12 @@ class AlignmentSettingsDialog(QDialog):
         self.sigma = QDoubleSpinBox()
         self.sigma.setRange(3.0, 10.0)
         self.sigma.setSingleStep(0.5)
-        self.sigma.setValue(self.settings.value("alignment/sigma", 5.0, float))
+        self.sigma.setValue(project.settings.alignment.sigma)
         layout.addRow("星検出感度 sigma", self.sigma)
 
         self.max_stars = QSpinBox()
         self.max_stars.setRange(20, 5000)
-        self.max_stars.setValue(self.settings.value("alignment/max_stars", 500, int))
+        self.max_stars.setValue(project.settings.alignment.max_stars)
         layout.addRow("最大星数", self.max_stars)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -172,7 +172,7 @@ class StackingSettingsDialog(QDialog):
         self.method = QComboBox()
         for method in StackingMethod:
             self.method.addItem(method.show_name, method)
-        current = self.settings.value("stacking/method", project.settings.light_frame.method)
+        current = project.settings.light_frame.method
         self.method.setCurrentIndex(self.method.findData(current))
         self.method.setToolTip(
             "Average: 高速な平均 / Median: 外れ値に強い中央値 / Add: 加算\n"
@@ -183,11 +183,7 @@ class StackingSettingsDialog(QDialog):
         layout.addRow("スタック方法", self.method)
 
 
-        use_alignment = self.settings.value(
-            "stacking/use_alignment",
-            project.settings.use_alignment,
-            type=bool,
-        )
+        use_alignment = project.settings.use_alignment
         alignment_mode_box = QGroupBox("使用する画像")
         alignment_mode_layout = QVBoxLayout(alignment_mode_box)
         self.alignment_group = QButtonGroup(self)
@@ -238,11 +234,11 @@ class StackingSettingsDialog(QDialog):
 
         self.sigma = QDoubleSpinBox()
         self.sigma.setRange(0.5, 10.0)
-        self.sigma.setValue(self.settings.value("stacking/sigma", 3.0, float))
+        self.sigma.setValue(project.settings.light_frame.sigma)
         sigma_layout.addRow("Sigma", self.sigma)
         self.iterations = QSpinBox()
         self.iterations.setRange(1, 10)
-        self.iterations.setValue(self.settings.value("stacking/iterations", 1, int))
+        self.iterations.setValue(project.settings.light_frame.iterations)
         sigma_layout.addRow("繰り返し", self.iterations)
 
         self.method.currentIndexChanged.connect(self._update_sigma_widgets)
@@ -320,6 +316,10 @@ class SaveDialog(QDialog):
         self.bit_depth = QComboBox()
         self.bit_depth.addItems(["16", "32 float"])
         layout.addRow("保存ビット", self.bit_depth)
+        self.comment = QTextEdit()
+        self.comment.setPlaceholderText("任意の出力コメント（撮影条件の集計に追記）")
+        self.comment.setMaximumHeight(90)
+        layout.addRow("EXIFコメント", self.comment)
         self.quality = QSpinBox()
         self.quality.setRange(0, 100)
         self.quality.setValue(90)
@@ -352,6 +352,7 @@ class SaveDialog(QDialog):
         return path, {
             "bit_depth": 32 if self.bit_depth.currentIndex() == 1 else 16,
             "quality": self.quality.value(),
+            "comment": self.comment.toPlainText(),
         }
 
 

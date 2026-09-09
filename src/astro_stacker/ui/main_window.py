@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
+from dataclasses import asdict
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QTransform
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QInputDialog,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -81,6 +83,10 @@ class PipelineWorker(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._dirty = False
+        self._restoring = False
+        self._busy = False
+        self._showing_result = False
         self.settings = QSettings("AstroStacker", "AstroStacker")
         self.manager = ImageManager(max_loaded_image_count=10)
         self.controller = ProjectController()
@@ -253,6 +259,22 @@ class MainWindow(QMainWindow):
 
     def _create_menu(self):
         file_menu = self.menuBar().addMenu("ファイル")
+        self.project_open_action = QAction("プロジェクトを開く...", self)
+        self.project_open_action.setShortcut("Ctrl+O")
+        self.project_open_action.triggered.connect(self._open_project)
+        self.project_save_action = QAction("プロジェクトを保存", self)
+        self.project_save_action.setShortcut("Ctrl+S")
+        self.project_save_action.triggered.connect(lambda: self._save_project())
+        self.project_save_as_action = QAction("プロジェクトを名前を付けて保存...", self)
+        self.project_save_as_action.setShortcut("Ctrl+Shift+S")
+        self.project_save_as_action.triggered.connect(lambda: self._save_project(save_as=True))
+        self.project_notes_action = QAction("プロジェクトのメモ...", self)
+        self.project_notes_action.triggered.connect(self._edit_project_notes)
+        self.project_history_action = QAction("位置合わせ履歴...", self)
+        self.project_history_action.triggered.connect(self._show_project_history)
+        for action in self._project_actions():
+            file_menu.addAction(action)
+        file_menu.addSeparator()
         for frame_type in FrameType:
             action = QAction(f"{frame_type.ja_name}を追加", self)
             action.triggered.connect(lambda checked=False, ft=frame_type: self._on_add_frames(ft))
@@ -267,7 +289,143 @@ class MainWindow(QMainWindow):
         language_menu.addAction(japanese)
         language_menu.addAction(english)
 
+    def _project_actions(self):
+        return (self.project_open_action, self.project_save_action, self.project_save_as_action,
+                self.project_notes_action, self.project_history_action)
+
+    def _mark_dirty(self, *_):
+        if self._restoring:
+            return
+        if not self.controller.project.known_paths and not self.controller.project.notes and not self.controller.project.project_path:
+            return
+        self._dirty = True
+        self.setWindowTitle(f"Astro Stacker — {self.controller.project.project_name} *")
+
+    def _capture_view(self):
+        transform = self.viewer.transform()
+        self.controller.project.view_state = {
+            "selected": self._selected_frame.info.path if self._selected_frame else None,
+            "category": self.frame_table.current_frame_type().value,
+            "preview": asdict(self.preview_settings), "result": self._showing_result,
+            "show_stars": self.show_stars_checkbox.isChecked(),
+            "star_mode": self.star_mode_combo.currentIndex(),
+            "zoom": [transform.m11(), transform.m12(), transform.m21(), transform.m22(),
+                     transform.dx(), transform.dy()],
+            "scroll": [self.viewer.horizontalScrollBar().value(), self.viewer.verticalScrollBar().value()],
+            "plate_settings": {key: self.settings.value("platesolve/" + key, default, kind)
+                for key, default, kind in [("executable", "solve-field", str), ("downsample", 2, int),
+                    ("auto_downsample", True, bool), ("timeout", 180, int)]},
+        }
+
+    def _save_project(self, save_as=False):
+        from ..project.storage import save_project
+        path = self.controller.project.project_path
+        if save_as or path is None:
+            name, _ = QFileDialog.getSaveFileName(self, "プロジェクトを保存",
+                str(path or Path.cwd() / "Untitled.astrostacker"), "Astro Stacker (*.astrostacker)")
+            if not name:
+                return False
+            path = Path(name)
+            if path.suffix.lower() != ".astrostacker":
+                path = path.with_name(path.name + ".astrostacker")
+        try:
+            self._capture_view()
+            save_project(self.controller.project, path)
+            self._dirty = False
+            self.setWindowTitle(f"Astro Stacker — {path.stem}")
+            return True
+        except Exception as exc:
+            ErrorDialog.show_exception(self, "プロジェクト保存エラー", exc)
+            return False
+
+    def _confirm_discard(self):
+        if not self._dirty:
+            return True
+        choice = QMessageBox.question(self, "未保存のプロジェクト",
+            "プロジェクトの変更を保存しますか？",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel)
+        if choice == QMessageBox.StandardButton.Save:
+            return self._save_project()
+        return choice == QMessageBox.StandardButton.Discard
+
+    def _open_project(self):
+        from ..project.storage import load_project
+        name, _ = QFileDialog.getOpenFileName(self, "プロジェクトを開く", "", "Astro Stacker (*.astrostacker)")
+        if not name or not self._confirm_discard():
+            return
+        try:
+            project, warnings = load_project(Path(name))
+        except Exception as exc:
+            ErrorDialog.show_exception(self, "プロジェクト読み込みエラー", exc)
+            return
+        self._install_project(project)
+        if warnings:
+            QMessageBox.warning(self, "プロジェクトの復元", "\n".join(warnings))
+
+    def _install_project(self, project):
+        self._restoring = True
+        try:
+            self.manager.unload_all()
+            self.controller.project = project
+            self._selected_frame = None
+            def reference_changed(image):
+                self.project_tree.update_reference_image_display(image)
+                self._refresh_tables()
+                self._mark_dirty()
+            project.on_reference_image_changed = reference_changed
+            # Resolve the project at signal time rather than retaining an old bound method.
+            self._refresh_tables()
+            self.project_tree.update_reference_image_display(project.reference_image)
+            for category in FrameType:
+                self.project_tree.set_count(category, self.controller.get_count(category))
+            view = project.view_state
+            self.preview_settings = PreviewSettings(**view.get("preview", {}))
+            self.frame_table.tabs.setCurrentIndex(list(FrameType).index(FrameType(view.get("category", "lights"))))
+            self.show_stars_checkbox.setChecked(view.get("show_stars", False))
+            self.star_mode_combo.setCurrentIndex(view.get("star_mode", 0))
+            for key, value in view.get("plate_settings", {}).items():
+                self.settings.setValue("platesolve/" + key, value)
+            from ..project.storage import frame_groups
+            selected = next((f for frames in frame_groups(project).values() for f in frames
+                             if view.get("selected") is not None and f.info.path.resolve() == Path(view["selected"]).resolve() and f.info.path.exists()), None)
+            self._preview_frame(selected)
+            if selected is not None:
+                self.frame_table.select_frame(selected)
+            self._showing_result = bool(view.get("result") and project.result.stacked_image is not None)
+            if self._showing_result:
+                self.viewer.set_image(project.result.stacked_image)
+            if "zoom" in view:
+                self.viewer.setTransform(QTransform(*view["zoom"]))
+                self.viewer._fit_mode = False
+            if "scroll" in view:
+                self.viewer.horizontalScrollBar().setValue(view["scroll"][0])
+                self.viewer.verticalScrollBar().setValue(view["scroll"][1])
+            self._aligned = project.is_alignment_valid()
+            self._stacked = project.result.stacked_image is not None
+            self._update_actions()
+        finally:
+            self._restoring = False
+        self._dirty = False
+        self.setWindowTitle(f"Astro Stacker — {project.project_name}")
+
+    def _edit_project_notes(self):
+        text, accepted = QInputDialog.getMultiLineText(self, "プロジェクトのメモ", "撮影・処理メモ", self.controller.project.notes)
+        if accepted:
+            self.controller.project.notes = text
+            self._mark_dirty()
+
+    def _show_project_history(self):
+        sessions = self.controller.project.alignment_sessions.values()
+        text = "\n".join(f"{s.created_at.isoformat()}  基準: {s.reference_name}  [{s.session_id}]" for s in sessions)
+        QMessageBox.information(self, "位置合わせ履歴", text or "保存された履歴はありません。")
+
     def _connect_signals(self):
+        self.controller.project_changed.connect(self._mark_dirty)
+        self.frame_table.enabled_changed.connect(self._mark_dirty)
+        self.viewer.zoom_changed.connect(self._mark_dirty)
+        self.frame_table.tabs.currentChanged.connect(self._mark_dirty)
+        self.show_stars_checkbox.toggled.connect(self._mark_dirty)
+        self.star_mode_combo.currentIndexChanged.connect(self._mark_dirty)
         self.controller.category_count_changed.connect(self.project_tree.set_count)
         self.controller.all_frames_changed.connect(lambda _: self._refresh_tables())
         self.project_tree.frame_type_selected.connect(lambda ft: self.frame_table.tabs.setCurrentIndex(list(FrameType).index(ft)))
@@ -276,11 +434,12 @@ class MainWindow(QMainWindow):
         self.frame_table.enabled_changed.connect(lambda *_: self._update_actions())
         self.frame_table.removed.connect(self.controller.remove_frames)
         self.frame_table.selection_cleared.connect(lambda *_: self._preview_frame(None))
-        self.frame_table.reference_image_requested.connect(self.controller.project.set_reference_image)
+        self.frame_table.reference_image_requested.connect(lambda image: self.controller.project.set_reference_image(image))
 
         def on_reference_changed(image):
             self.project_tree.update_reference_image_display(image)
             self._refresh_tables()
+            self._mark_dirty()
 
         self.controller.project.on_reference_image_changed = on_reference_changed
         on_reference_changed(self.controller.project.reference_image)
@@ -333,6 +492,9 @@ class MainWindow(QMainWindow):
         self.frame_table.set_frames(self.controller.frame_map(), self.controller.project.reference_image)
 
     def _preview_frame(self, image):
+        self._showing_result = False
+        if image is not self._selected_frame:
+            self._mark_dirty()
         self._selected_frame = image
         self._update_actions()
         if image is None:
@@ -368,12 +530,17 @@ class MainWindow(QMainWindow):
             use_aligned_image=use_aligned_image,
         )
         accepted = dialog.exec() == StackingSettingsDialog.DialogCode.Accepted
+        if accepted:
+            self._mark_dirty()
         if self._selected_frame is not None:
             self._preview_frame(self._selected_frame)
         return accepted
     
     def _show_alignment_dialog(self) -> bool:
-        return (AlignmentSettingsDialog(self.controller.project, self).exec() == AlignmentSettingsDialog.DialogCode.Accepted)
+        accepted = AlignmentSettingsDialog(self.controller.project, self).exec() == AlignmentSettingsDialog.DialogCode.Accepted
+        if accepted:
+            self._mark_dirty()
+        return accepted
 
     def _run_alignment(self):
         if not self._show_alignment_dialog():
@@ -485,6 +652,7 @@ class MainWindow(QMainWindow):
 
         if on_success:
             on_success()
+        self._mark_dirty()
         
         self._update_actions()
         self._thread = None
@@ -498,6 +666,7 @@ class MainWindow(QMainWindow):
         self._aligned = True
         self._stacked = self.controller.project.result.stacked_image is not None
         if self._stacked:
+            self._showing_result = True
             self.viewer.set_image(self.controller.project.result.stacked_image)
         logger.info("スタックが完了しました")
 
@@ -511,29 +680,24 @@ class MainWindow(QMainWindow):
             return
         path, kwargs = dialog.selected()
         try:
-            save_image(result, path, **kwargs)
+            metadata = dict(self.controller.project.result.metadata)
+            comment = kwargs.pop("comment", "")
+            if comment:
+                metadata["COMMENT"] = metadata.get("COMMENT", "") + "\n" + comment
+            save_image(result, path, metadata=metadata, **kwargs)
             logger.info("保存しました: %s", path)
         except Exception as exc:
             ErrorDialog.show_exception(self, "保存エラー", exc)
 
     def _reset_project(self):
-        self.controller.reset()
-
-        def on_reference_changed(image):
-            self.project_tree.update_reference_image_display(image)
-            self._refresh_tables()
-
-        self.controller.project.on_reference_image_changed = on_reference_changed
-        on_reference_changed(None)
-
-        self.manager.unload_all()
-        self.viewer.set_image(None)
-        self._selected_frame = None
-        self._aligned = False
-        self._stacked = False
-        self._update_actions()
+        if self._confirm_discard():
+            from ..project.project import Project
+            self._install_project(Project())
 
     def _set_busy(self, busy: bool):
+        self._busy = busy
+        for action in self._project_actions():
+            action.setEnabled(not busy)
         for action in (
             self.add_action,
             self.align_action,
@@ -547,6 +711,8 @@ class MainWindow(QMainWindow):
         self.project_tree.setEnabled(not busy)
 
     def _update_actions(self):
+        if self._busy:
+            return
         has_lights = bool(self.controller.project.light_frames)
         self.align_action.setEnabled(has_lights)
         self.stack_action.setEnabled(has_lights)
@@ -568,6 +734,13 @@ class MainWindow(QMainWindow):
             self.restoreState(state)
 
     def closeEvent(self, event):
+        if self._busy:
+            QMessageBox.information(self, "処理中", "処理をキャンセルし、終了を待ってから閉じてください。")
+            event.ignore()
+            return
+        if not self._confirm_discard():
+            event.ignore()
+            return
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/state", self.saveState())
         super().closeEvent(event)

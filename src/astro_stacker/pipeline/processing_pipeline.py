@@ -93,7 +93,10 @@ class ProcessingPipeline:
             return None
 
         settings = getattr(project.settings, f"{master_type.removeprefix('master_')}_frame", None)
-        master = builder.build(inputs, method, settings, progress, is_cancelled, master_type).astype(np.float32, copy=False)
+        master = builder.build(inputs, method, settings, progress, is_cancelled, master_type)
+        if master is None:
+            return None
+        master = master.astype(np.float32, copy=False)
         for frame in inputs:
             frame.info.enabled = False
         self._save_master(project, frames, master, master_type)
@@ -184,7 +187,7 @@ class ProcessingPipeline:
         save_fits(
             project.result.stacked_image,
             path,
-            metadata=project.light_frames[0].info.exif,
+            metadata=project.result.metadata,
             frame_type="stacked_light",
         )
         project.output_path = path
@@ -201,13 +204,9 @@ class ProcessingPipeline:
         if progress:
             progress("マスター生成", 0, 1, "キャリブレーションフレームを作成中...")
 
-        # Preserve manual settings when called from UI, but auto-enable frame
-        # types in CLI/test use when the user has not opened settings.
+        # The project owns calibration choices; adding files enables their
+        # category in the controller, but a saved unchecked choice stays off.
         calibration = project.settings.calibration
-        calibration.use_biases = calibration.use_biases or bool(project.calibration_frames.biases)
-        calibration.use_darks = calibration.use_darks or bool(project.calibration_frames.darks)
-        calibration.use_flats = calibration.use_flats or bool(project.calibration_frames.flats)
-        calibration.use_flat_darks = calibration.use_flat_darks or bool(project.calibration_frames.flat_darks)
 
         provider = ImageManagerProvider(self.manager)
         builder = MasterFrameBuilder(provider)

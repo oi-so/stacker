@@ -48,7 +48,7 @@ class ProjectController(QObject):
         # keeping every model mutation and signal on the caller's GUI thread.
         from concurrent.futures import ThreadPoolExecutor
 
-        paths = list(dict.fromkeys(Path(path) for path in paths))
+        paths = list(dict.fromkeys(Path(path).resolve() for path in paths))
         paths = [path for path in paths if path not in self.project.known_paths]
         if not paths:
             return
@@ -59,12 +59,16 @@ class ProjectController(QObject):
                     category = MASTER_TO_FRAME_TYPE.get(image.info.master_type, frame_type)
                     self.project.known_paths.add(image.info.path)
                     self._get_frame_list(category).append(image)
+                    if category != FrameType.LIGHT:
+                        setattr(self.project.settings.calibration, "use_" + category.value, True)
                     changed.add(category)
         finally:
             # Also refresh successfully loaded frames if a later file fails.
             for category in changed:
                 self.category_count_changed.emit(category, self.get_count(category))
             if changed:
+                from ...io.history import adopt_alignment_history
+                adopt_alignment_history(self.project)
                 self.project_changed.emit()
                 self.frames_changed.emit(self.get_frames(self.selected_frame_type))
                 self.all_frames_changed.emit(self.frame_map())

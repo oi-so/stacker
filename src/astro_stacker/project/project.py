@@ -40,6 +40,7 @@ class AppSettings:
 @dataclass
 class ProjectResult:
     stacked_image: np.ndarray | None = None
+    metadata: dict = field(default_factory=dict)
 
 
 
@@ -68,6 +69,7 @@ class AlignmentSignature:
     sigma: float
     max_stars: int
     calibrate_before_align: bool
+    calibration_state: tuple = ()
 
 
 @dataclass
@@ -91,6 +93,9 @@ class Project:
 
     output_path: Path | None = None
     project_name: str = "Untitled"
+    project_path: Path | None = None
+    view_state: dict = field(default_factory=dict)
+    notes: str = ""
     settings: ProjectSettings = field(default_factory=ProjectSettings)
     result: ProjectResult = field(default_factory=ProjectResult)
     cache_directory: Path | None = None
@@ -103,6 +108,21 @@ class Project:
     on_reference_image_changed: Callable[[AstroImage | None], None] | None = field(default=None, repr=False, compare=False)
 
     def make_alignment_signature(self) -> AlignmentSignature:
+        from .codec import fingerprint
+        calibration_state = []
+        if self.settings.alignment.calibrate_before_align:
+            for name in ("darks", "flats", "flat_darks", "biases"):
+                active = getattr(self.settings.calibration, "use_" + name)
+                entries = []
+                if active:
+                    for frame in getattr(self.calibration_frames, name):
+                        if frame.info.enabled:
+                            try:
+                                signature = fingerprint(frame.info.path)
+                            except OSError:
+                                signature = None
+                            entries.append((frame.info.path, signature))
+                calibration_state.append((name, active, tuple(entries)))
         return AlignmentSignature(
             enabled_paths=frozenset(
                 frame.info.path
@@ -118,6 +138,7 @@ class Project:
             max_stars=self.settings.alignment.max_stars,
             calibrate_before_align=
                 self.settings.alignment.calibrate_before_align,
+            calibration_state=tuple(calibration_state),
         )
 
     def is_alignment_valid(self) -> bool:

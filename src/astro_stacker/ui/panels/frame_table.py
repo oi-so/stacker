@@ -162,6 +162,18 @@ class FrameTable(QWidget):
         for frame_type, frames in frame_map.items():
             self.show_frames(frame_type, frames, reference_image)
 
+    def select_frame(self, frame):
+        for category, frames in self._frames.items():
+            index = next((i for i, candidate in enumerate(frames) if candidate is frame), None)
+            if index is None:
+                continue
+            self.tabs.setCurrentIndex(list(FrameType).index(category))
+            table = self._tables[category]
+            for row in range(table.rowCount()):
+                if table.item(row, Column.ENABLED).data(Qt.ItemDataRole.UserRole) == index:
+                    table.selectRow(row)
+                    return
+
     def show_frames(self, frame_type: FrameType, frames: list[AstroImage], reference_image: AstroImage | None = None) -> None:
         if reference_image is None:
             reference_image = self._current_reference_image

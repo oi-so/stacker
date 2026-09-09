@@ -43,14 +43,25 @@ def load_info(path: Path) -> AstroImage:
         Tries RAW and FITS loaders first, then falls back to standard loader
         (PNG, JPEG, TIFF, etc.)
     """
-    path = Path(path)
+    path = Path(path).resolve()
+    from .history import load_history, save_history
+    from ..project.codec import fingerprint
+    cached = load_history(path)
+    if cached is not None:
+        return cached
     ext = path.suffix.lower()
     for loader_name, (extensions, info_loader, image_loader) in LOADERS.items():
         if ext in extensions:
             logger.debug("Loading %s metadata with %s loader", path, loader_name)
-            return info_loader(path)
+            frame = info_loader(path)
+            frame._source_fingerprint = fingerprint(path)
+            save_history(frame)
+            return frame
     logger.debug("Loading %s metadata with standard loader", path)
-    return load_standard_info(path)
+    frame = load_standard_info(path)
+    frame._source_fingerprint = fingerprint(path)
+    save_history(frame)
+    return frame
 
 
 def load_image(astro_image: AstroImage) -> np.ndarray:

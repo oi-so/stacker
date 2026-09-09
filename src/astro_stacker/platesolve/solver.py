@@ -111,6 +111,9 @@ class AstrometryNetSolver:
 
         if key is not None:
             frame._plate_solve_cache = (key, replace(result, wcs=result.wcs.deepcopy()))
+        frame.info.wcs = result.wcs.deepcopy()
+        from ..io.history import save_history
+        save_history(frame)
         return result
 
     @staticmethod
