@@ -87,18 +87,39 @@ Plate Solveしていないフレームは、恒星位置合わせの変換行列
 
 ## 開発環境
 
-Python 3.12 以上を想定しています。
+依存関係と仮想環境は [uv](https://docs.astral.sh/uv/getting-started/installation/) で管理します。
+uv をインストール後、プロジェクトのルートで実行してください。
+標準の Python バージョンは `.python-version` で 3.12 に指定しています。
 
 ```bash
-python -m pip install -e ".[dev]"
-python -m astro_stacker
+uv sync --locked
+uv run astro-stacker
 ```
 
-または:
+`uv sync --locked` は `uv.lock` に固定された依存関係と開発用ツールを `.venv` にインストールします。
+Python 3.12 が見つからない場合は uv が自動で取得します。
+仮想環境の手動有効化や `PYTHONPATH` の設定は不要です。
+モジュール形式で起動する場合は `uv run python -m astro_stacker` も使えます。
+
+アプリの実行用依存関係だけをインストールする場合:
 
 ```bash
-astro-stacker
+uv sync --locked --no-dev
+uv run --no-dev astro-stacker
 ```
+
+開発用コマンド:
+
+```bash
+uv run pytest
+uv run ruff check src
+uv run black --check src
+uv run mypy src
+```
+
+依存関係の追加は `uv add パッケージ名`、開発用は `uv add --dev パッケージ名` を使います。
+`pyproject.toml` を直接編集した場合は `uv lock` でロックファイルを更新し、`uv sync --locked` で反映してください。
+`pyproject.toml`、`uv.lock`、`.python-version` は一緒にバージョン管理します。
 
 ## 開発者向けメモ
 
