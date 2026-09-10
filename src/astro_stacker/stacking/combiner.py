@@ -4,7 +4,9 @@ import logging
 import os
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from itertools import chain
 from pathlib import Path
 
 import numpy as np
@@ -15,6 +17,7 @@ from ..core.resources import (
     DISK_RESERVE_BYTES,
     STACK_DISK_BYTES,
     STACK_MEMORY_BYTES,
+    bounded_workers,
 )
 from ..io.image_data import AstroImage
 from ..masks.weights import WeightMaskProvider, validity_mask
@@ -50,6 +53,7 @@ class ImageCombiner:
         mask_provider: WeightMaskProvider | None = None,
         frame_weights: dict[Path, float] | None = None,
         invalid_fill: float = 0.0,
+        requested_workers: int = 1,
     ) -> np.ndarray | None:
         images = [image for image in images if image.info.enabled]
         if not images:
@@ -72,12 +76,47 @@ class ImageCombiner:
         if method in (StackingMethod.MEDIAN, StackingMethod.SIGMA_CLIP):
             return self._statistical(
                 images, method, settings, progress, is_cancelled, combine_msg,
-                mask_provider, frame_weights, invalid_fill,
+                mask_provider, frame_weights, invalid_fill, requested_workers,
             )
         return self._stream(
             images, method, progress, is_cancelled, combine_msg,
-            mask_provider, frame_weights, invalid_fill,
+            mask_provider, frame_weights, invalid_fill, requested_workers,
         )
+
+    def _prepared_images(self, images, requested_workers):
+        """Prefetch a bounded number of provider results while preserving order."""
+        first_info = images[0].info
+        frame_bytes = (
+            first_info.shape.width
+            * first_info.shape.height
+            * max(1, first_info.shape.channels)
+            * np.dtype(np.float32).itemsize
+        )
+        workers = bounded_workers(requested_workers, frame_bytes, copies_per_worker=4)
+        if workers <= 1 or len(images) <= 1:
+            for frame in images:
+                yield frame, np.asarray(self.provider.get_image(frame), dtype=np.float32)
+            return
+
+        logger.info("Stack preparation workers: %d", workers)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            pending = {}
+            next_index = 0
+            while next_index < min(workers, len(images)):
+                pending[next_index] = executor.submit(self.provider.get_image, images[next_index])
+                next_index += 1
+            try:
+                for index, frame in enumerate(images):
+                    array = np.asarray(pending.pop(index).result(), dtype=np.float32)
+                    if next_index < len(images):
+                        pending[next_index] = executor.submit(
+                            self.provider.get_image, images[next_index]
+                        )
+                        next_index += 1
+                    yield frame, array
+            finally:
+                for future in pending.values():
+                    future.cancel()
 
     @staticmethod
     def _frame_weight(frame, frame_weights):
@@ -102,15 +141,29 @@ class ImageCombiner:
 
     def _stream(
         self, images, method, progress, is_cancelled, message,
-        mask_provider, frame_weights, invalid_fill,
+        mask_provider, frame_weights, invalid_fill, requested_workers,
     ):
+        if (
+            mask_provider is None
+            and frame_weights is None
+            and method in (StackingMethod.AVERAGE, StackingMethod.ADD)
+        ):
+            return self._stream_unweighted(
+                images,
+                method,
+                progress,
+                is_cancelled,
+                message,
+                invalid_fill,
+                requested_workers,
+            )
         acc = low = high = weight_sum = None
-        for i, frame in enumerate(images, 1):
+        prepared = self._prepared_images(images, requested_workers)
+        for i, (frame, arr) in enumerate(prepared, 1):
             if is_cancelled and is_cancelled():
                 return None
             if progress:
                 progress(f"{message}生成中", i, len(images), frame.info.path.name)
-            arr = np.asarray(self.provider.get_image(frame), dtype=np.float32)
             pixel_weight = self._pixel_weight(frame, arr, mask_provider, frame_weights)
             broadcast = self._broadcast_weight(pixel_weight, arr)
             if acc is None:
@@ -157,6 +210,58 @@ class ImageCombiner:
         np.copyto(acc, invalid_fill, where=invalid)
         return acc
 
+    def _stream_unweighted(
+        self, images, method, progress, is_cancelled, message, invalid_fill, requested_workers
+    ):
+        """Fast finite-data path without allocating full weight arrays per frame."""
+        acc = None
+        weight_sum = None
+        processed = 0
+        for i, (frame, arr) in enumerate(
+            self._prepared_images(images, requested_workers), 1
+        ):
+            if is_cancelled and is_cancelled():
+                return None
+            if progress:
+                progress(f"{message}生成中", i, len(images), frame.info.path.name)
+            if acc is not None and arr.shape != acc.shape:
+                raise ValueError("All stacking frames must have the same shape")
+            finite = np.isfinite(arr)
+            pixel_valid = np.all(finite, axis=-1) if arr.ndim == 3 else finite
+            if np.all(pixel_valid):
+                if acc is None:
+                    acc = arr.copy()
+                else:
+                    acc += arr
+                if weight_sum is not None:
+                    weight_sum += 1
+            else:
+                if acc is None:
+                    acc = np.zeros_like(arr)
+                    weight_sum = np.zeros(arr.shape[:2], dtype=np.float32)
+                elif weight_sum is None:
+                    weight_sum = np.full(arr.shape[:2], processed, dtype=np.float32)
+                broadcast = pixel_valid[..., np.newaxis] if arr.ndim == 3 else pixel_valid
+                np.add(acc, arr, out=acc, where=broadcast)
+                weight_sum += pixel_valid
+            processed += 1
+
+        if weight_sum is None:
+            self.last_valid_mask = np.ones(acc.shape[:2], dtype=np.float32)
+            if method == StackingMethod.AVERAGE:
+                acc /= processed
+            return acc
+
+        if method == StackingMethod.AVERAGE:
+            denominator = weight_sum[..., np.newaxis] if acc.ndim == 3 else weight_sum
+            np.divide(acc, denominator, out=acc, where=denominator > 0)
+        self.last_valid_mask = (weight_sum > 0).astype(np.float32)
+        invalid = weight_sum <= 0
+        if acc.ndim == 3:
+            invalid = invalid[..., np.newaxis]
+        np.copyto(acc, invalid_fill, where=invalid)
+        return acc
+
     @contextmanager
     def _storage(self, shape, budget):
         size = int(np.prod(shape, dtype=np.int64)) * np.dtype(np.float32).itemsize
@@ -187,29 +292,23 @@ class ImageCombiner:
 
     def _statistical(
         self, images, method, settings, progress, is_cancelled, message,
-        mask_provider, frame_weights, invalid_fill,
+        mask_provider, frame_weights, invalid_fill, requested_workers,
     ):
-        first = np.asarray(self.provider.get_image(images[0]), dtype=np.float32)
+        prepared = iter(self._prepared_images(images, requested_workers))
+        first_frame, first = next(prepared)
         shape = first.shape
         if first.ndim not in (2, 3) or any(size == 0 for size in shape):
             raise ValueError(f"Unsupported image shape: {shape}")
         budget = max(1, min(self.memory_limit, psutil.virtual_memory().available // 4))
         with self._storage((len(images), *shape), budget) as stack:
-            for i, frame in enumerate(images):
+            for i, (frame, arr) in enumerate(chain(((first_frame, first),), prepared)):
                 if is_cancelled and is_cancelled():
                     return None
-                arr = (
-                    first
-                    if i == 0
-                    else np.asarray(self.provider.get_image(frame), dtype=np.float32)
-                )
                 if arr.shape != shape:
                     raise ValueError("All stacking frames must have the same shape")
                 weight = self._pixel_weight(frame, arr, mask_provider, frame_weights)
                 broadcast = self._broadcast_weight(weight, arr)
                 stack[i] = np.where(broadcast > 0, arr, np.nan)
-                if i == 0:
-                    first = None
                 if progress:
                     progress(f"{message}データ準備中", i + 1, len(images), frame.info.path.name)
             del arr

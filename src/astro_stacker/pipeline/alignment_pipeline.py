@@ -1,9 +1,14 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import cv2
 import numpy as np
 
-from ..alignment.aligner import align_catalogs, compose_alignment_transforms
+from ..alignment.aligner import (
+    align_catalogs,
+    compose_alignment_transforms,
+    transform_data_from_matrix,
+)
 from ..alignment.detection import process_frame
 from ..core.frame_provider import FrameProvider
 from ..core.resources import alignment_workers
@@ -17,6 +22,41 @@ logger = logging.getLogger(__name__)
 MAX_NEIGHBOR_REFERENCE_DISTANCE = 10
 
 
+def _has_celestial_wcs(frame) -> bool:
+    wcs = frame.info.wcs
+    return (
+        wcs is not None
+        and callable(getattr(wcs, "pixel_to_world_values", None))
+        and callable(getattr(wcs, "world_to_pixel_values", None))
+        and bool(getattr(wcs, "has_celestial", True))
+    )
+
+
+def _transform_from_wcs(frame, reference):
+    """Approximate target-pixel to reference-pixel WCS mapping as a homography."""
+    width, height = frame.info.shape.width, frame.info.shape.height
+    xs, ys = np.meshgrid(
+        np.linspace(0, max(0, width - 1), 5),
+        np.linspace(0, max(0, height - 1), 5),
+    )
+    ra, dec = frame.info.wcs.pixel_to_world_values(xs.ravel(), ys.ravel())
+    target_x, target_y = reference.info.wcs.world_to_pixel_values(ra, dec)
+    source = np.column_stack((xs.ravel(), ys.ravel())).astype(np.float64)
+    target = np.column_stack((target_x, target_y)).astype(np.float64)
+    finite = np.isfinite(source).all(axis=1) & np.isfinite(target).all(axis=1)
+    if np.count_nonzero(finite) < 4:
+        raise ValueError("WCS座標変換に必要な有効点が不足しています。")
+    matrix, _ = cv2.findHomography(source[finite], target[finite], method=0)
+    if matrix is None:
+        raise ValueError("WCSから位置合わせ行列を計算できませんでした。")
+    transform = transform_data_from_matrix(matrix)
+    homogeneous = np.column_stack((source[finite], np.ones(np.count_nonzero(finite))))
+    predicted = (matrix @ homogeneous.T).T
+    predicted = predicted[:, :2] / predicted[:, 2, np.newaxis]
+    rms = float(np.sqrt(np.mean(np.sum((predicted - target[finite]) ** 2, axis=1))))
+    return transform, len(predicted), rms
+
+
 class AlignmentPipeline:
     def __init__(self, provider: FrameProvider) -> None:
         self.provider = provider
@@ -27,6 +67,7 @@ class AlignmentPipeline:
         settings: AlignmentSettings,
         progress=None,
         is_cancelled=None,
+        requested_workers: int = 0,
     ) -> None:
         if not project.light_frames:
             raise ValueError("No light frames")
@@ -80,6 +121,28 @@ class AlignmentPipeline:
             frame.info.transform = TransformData()
             frame.info.alignment_data = AlignmentData()
 
+        if settings.use_wcs and all(_has_celestial_wcs(frame) for frame in enabled_frames):
+            reference.info.alignment_session_id = session_id
+            reference.info.transform = TransformData(matrix=np.eye(3, dtype=np.float64))
+            reference.info.alignment_data = AlignmentData(rms_error=0.0)
+            for index, frame in enumerate(frames_to_align, 1):
+                if is_cancelled and is_cancelled():
+                    return
+                if frame is not reference:
+                    transform, points, rms = _transform_from_wcs(frame, reference)
+                    frame.info.transform = transform
+                    frame.info.alignment_data = AlignmentData(
+                        reference_star_count=points,
+                        matched_star_count=points,
+                        rms_error=rms,
+                    )
+                    frame.info.alignment_session_id = session_id
+                if progress:
+                    progress("WCS高速位置合わせ中", index, len(frames_to_align), frame.info.path.name)
+            project.alignment_signature = project.make_alignment_signature()
+            logger.info("Aligned %d frames from existing FITS WCS", len(frames_to_align))
+            return
+
         with timer("AlignmentWorkers", True):
             if is_cancelled and is_cancelled():
                 return
@@ -108,7 +171,7 @@ class AlignmentPipeline:
 
             shape = reference.info.shape
             frame_bytes = shape.width * shape.height * max(1, shape.channels) * 4
-            workers = alignment_workers(frame_bytes)
+            workers = alignment_workers(frame_bytes, requested_workers)
             logger.info("Star detection workers: %d", workers)
             with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures = {

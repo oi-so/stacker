@@ -8,6 +8,7 @@ keeps a many-frame project bounded by the image/cache policy rather than by
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -76,6 +77,25 @@ class ArrayMaskProvider:
         else:
             mask = self.masks.get(astro_image.info.path)
         return np.ones(shape, dtype=np.float32) if mask is None else _as_mask(mask, shape)
+
+
+class FileMaskProvider:
+    """Load per-frame masks lazily and retain only the most recent mask."""
+
+    def __init__(self, paths: dict[Path, Path], loader: Callable[[Path], np.ndarray]):
+        self.paths = {Path(frame): Path(mask) for frame, mask in paths.items()}
+        self.loader = loader
+        self._cached_path: Path | None = None
+        self._cached_mask: np.ndarray | None = None
+
+    def get_mask(self, astro_image: AstroImage, shape: tuple[int, int]) -> np.ndarray:
+        path = self.paths.get(astro_image.info.path)
+        if path is None:
+            return np.ones(shape, dtype=np.float32)
+        if path != self._cached_path:
+            self._cached_mask = np.asarray(self.loader(path), dtype=np.float32)
+            self._cached_path = path
+        return _as_mask(self._cached_mask, shape)
 
 
 class CompositeMaskProvider:

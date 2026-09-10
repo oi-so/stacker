@@ -16,12 +16,11 @@ STACK_DISK_BYTES = 8 * GiB
 DISK_RESERVE_BYTES = 8 * GiB
 
 
-def alignment_workers(frame_bytes: int) -> int:
-    # Detection has several full-size temporaries. Keep headroom for the GUI,
-    # masters and OS; do not multiply native work by every logical CPU.
-    available = psutil.virtual_memory().available
-    per_worker = max(128 * MiB, frame_bytes * 12)
-    return max(1, min(2, os.cpu_count() or 1, available // 3 // per_worker))
+def alignment_workers(frame_bytes: int, requested: int = 0) -> int:
+    # Detection has several full-size temporaries. Keep headroom for the GUI
+    # and OS, but do not impose the former hard two-worker ceiling on machines
+    # that have enough memory.
+    return bounded_workers(requested, frame_bytes, copies_per_worker=12)
 
 
 def bounded_workers(requested: int, frame_bytes: int, *, copies_per_worker: int = 12) -> int:

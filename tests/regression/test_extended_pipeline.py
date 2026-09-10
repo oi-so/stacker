@@ -7,6 +7,7 @@ from astropy.io import fits
 from astro_stacker.alignment.transform import ImageTransformer
 from astro_stacker.analysis import analyze_motion, suggest_time_groups
 from astro_stacker.calibration.bad_pixels import correct_bad_pixels, detect_bad_pixels
+from astro_stacker.drizzle import DrizzleCombiner
 from astro_stacker.grouping import make_windows
 from astro_stacker.hdr import group_by_exposure, merge_hdr, tone_map
 from astro_stacker.io.image_data import (
@@ -17,13 +18,19 @@ from astro_stacker.io.image_data import (
     ImageShape,
     TransformData,
 )
-from astro_stacker.masks import ArrayMaskProvider, compose_masks, generate_star_mask
+from astro_stacker.masks import (
+    ArrayMaskProvider,
+    compose_masks,
+    generate_star_mask,
+    polyline_weight_mask,
+)
 from astro_stacker.nightscape import composite_nightscape, light_pollution_frame
 from astro_stacker.normalization import normalize_image
 from astro_stacker.pipeline.extended_pipeline import TimelapseStackPipeline
 from astro_stacker.pipeline.nightscape_pipeline import NightscapePipeline
 from astro_stacker.project.settings import (
     NightscapeSettings,
+    StackingMethod,
     StackingSettings,
     StarMaskSettings,
     TimelapseSettings,
@@ -73,6 +80,25 @@ def test_all_one_mask_matches_legacy_average():
         frames, mask_provider=ArrayMaskProvider(lambda _: np.ones((4, 5)))
     )
     np.testing.assert_allclose(masked, plain)
+
+
+def test_parallel_prefetch_preserves_order_and_nan_validity():
+    frames = [frame(0), frame(1), frame(2)]
+    arrays = np.stack(
+        [
+            np.full((4, 5), 1, dtype=np.float32),
+            np.full((4, 5), 3, dtype=np.float32),
+            np.full((4, 5), 5, dtype=np.float32),
+        ]
+    )
+    arrays[1, 2, 3] = np.nan
+    sequential = ImageCombiner(Provider(arrays)).combine(frames, requested_workers=1)
+    parallel_combiner = ImageCombiner(Provider(arrays))
+    parallel = parallel_combiner.combine(frames, requested_workers=2)
+
+    np.testing.assert_allclose(parallel, sequential)
+    assert parallel[2, 3] == pytest.approx(3)
+    assert parallel_combiner.last_valid_mask[2, 3] == 1
 
 
 def test_mask_composition_and_affine_transform_match_image_grid():
@@ -144,6 +170,62 @@ def test_bad_pixel_detection_and_cfa_safe_correction():
     assert bpm[4, 4] == 1
     corrected = correct_bad_pixels(image, bpm, cfa_type=CFAType.RGGB)
     assert corrected[4, 4] == pytest.approx(10)
+    corrected_channel = correct_bad_pixels(image[..., None], bpm[..., None])
+    assert corrected_channel[4, 4, 0] == pytest.approx(10)
+
+
+def test_bad_pixel_detection_rejects_nonfinite_calibration_data():
+    image = np.ones((5, 5), dtype=np.float32)
+    image[2, 2] = np.nan
+    with pytest.raises(ValueError, match="NaN"):
+        detect_bad_pixels(image)
+
+
+def test_polyline_mask_has_zero_core_feather_and_untouched_background():
+    mask = polyline_weight_mask(
+        (31, 31),
+        [[(4, 15), (26, 15)]],
+        line_width=3,
+        feather=4,
+    )
+    assert mask.dtype == np.float32
+    assert mask[15, 15] == 0
+    assert 0 < mask[19, 15] < 1
+    assert mask[0, 0] == 1
+
+
+def test_drizzle_reconstructs_larger_grid_and_respects_source_mask():
+    frames = [frame(0), frame(1)]
+    arrays = np.stack(
+        [np.full((4, 5), 2, dtype=np.float32), np.full((4, 5), 6, dtype=np.float32)]
+    )
+    source_masks = {
+        frames[0].info.path: np.ones((4, 5), dtype=np.float32),
+        frames[1].info.path: np.ones((4, 5), dtype=np.float32),
+    }
+    source_masks[frames[1].info.path][1, 2] = 0
+    combiner = DrizzleCombiner(Provider(arrays), chunk_rows=3)
+
+    result = combiner.combine(
+        frames,
+        scale=2,
+        pixfrac=1,
+        mask_provider=ArrayMaskProvider(source_masks),
+    )
+
+    assert result.shape == (8, 10)
+    assert result[2, 4] == pytest.approx(2)
+    assert result[0, 0] == pytest.approx(4)
+    assert np.all(combiner.last_valid_mask == 1)
+
+
+def test_drizzle_requires_supported_method_and_alignment_scale():
+    frames = [frame(0)]
+    combiner = DrizzleCombiner(Provider(np.ones((1, 4, 5), dtype=np.float32)))
+    with pytest.raises(ValueError, match="Average and Add"):
+        combiner.combine(frames, method=StackingMethod.MEDIAN)
+    with pytest.raises(ValueError, match="scale"):
+        combiner.combine(frames, scale=4)
 
 
 def test_motion_analysis_reports_reversal_candidate():

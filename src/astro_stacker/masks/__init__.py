@@ -1,5 +1,6 @@
 """Reusable float32 mask and weight primitives."""
 
+from .artifacts import detect_line_candidates, polyline_weight_mask
 from .stars import generate_star_mask
 from .weights import (
     AlignedMaskProvider,
@@ -7,6 +8,7 @@ from .weights import (
     ArrayMaskProvider,
     CompositeMaskProvider,
     ConstantMaskProvider,
+    FileMaskProvider,
     WeightMaskProvider,
     compose_masks,
     validity_mask,
@@ -18,8 +20,11 @@ __all__ = [
     "ArrayMaskProvider",
     "CompositeMaskProvider",
     "ConstantMaskProvider",
+    "FileMaskProvider",
     "WeightMaskProvider",
     "compose_masks",
+    "detect_line_candidates",
     "generate_star_mask",
+    "polyline_weight_mask",
     "validity_mask",
 ]

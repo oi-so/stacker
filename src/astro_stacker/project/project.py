@@ -72,6 +72,7 @@ class AlignmentSignature:
     sigma: float
     max_stars: int
     calibrate_before_align: bool
+    use_wcs: bool = False
     calibration_state: tuple = ()
 
 
@@ -113,7 +114,8 @@ class Project:
     def make_alignment_signature(self) -> AlignmentSignature:
         from .codec import fingerprint
         calibration_state = []
-        if self.settings.alignment.calibrate_before_align:
+        cosmetic = self.settings.processing.cosmetic_correction
+        if self.settings.alignment.calibrate_before_align or cosmetic.enabled:
             for name in ("darks", "flats", "flat_darks", "biases"):
                 active = getattr(self.settings.calibration, "use_" + name)
                 entries = []
@@ -126,6 +128,24 @@ class Project:
                                 signature = None
                             entries.append((frame.info.path, signature))
                 calibration_state.append((name, active, tuple(entries)))
+        if cosmetic.enabled:
+            try:
+                bad_pixel_signature = (
+                    fingerprint(cosmetic.bad_pixel_map_path)
+                    if cosmetic.bad_pixel_map_path is not None
+                    else None
+                )
+            except OSError:
+                bad_pixel_signature = None
+            calibration_state.append(
+                (
+                    "cosmetic_correction",
+                    cosmetic.enabled,
+                    cosmetic.bad_pixel_map_path,
+                    cosmetic.method,
+                    bad_pixel_signature,
+                )
+            )
         return AlignmentSignature(
             enabled_paths=frozenset(
                 frame.info.path
@@ -141,6 +161,7 @@ class Project:
             max_stars=self.settings.alignment.max_stars,
             calibrate_before_align=
                 self.settings.alignment.calibrate_before_align,
+            use_wcs=self.settings.alignment.use_wcs,
             calibration_state=tuple(calibration_state),
         )
 

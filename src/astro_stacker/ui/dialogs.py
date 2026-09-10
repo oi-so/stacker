@@ -129,6 +129,13 @@ class AlignmentSettingsDialog(QDialog):
         self.max_stars.setValue(project.settings.alignment.max_stars)
         layout.addRow("最大星数", self.max_stars)
 
+        self.use_wcs = QCheckBox("利用可能ならFITS WCSから高速に位置合わせ")
+        self.use_wcs.setChecked(project.settings.alignment.use_wcs)
+        self.use_wcs.setToolTip(
+            "全Lightに有効な天球WCSがある場合、星の再検出・照合を省略します。"
+        )
+        layout.addRow(self.use_wcs)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -148,6 +155,7 @@ class AlignmentSettingsDialog(QDialog):
             self.project.set_reference_image(self.manual_reference.currentData())
         alignment.sigma = self.sigma.value()
         alignment.max_stars = self.max_stars.value()
+        alignment.use_wcs = self.use_wcs.isChecked()
         calibration.use_darks = self.use_dark.isChecked()
         calibration.use_biases = self.use_bias.isChecked()
         calibration.use_flats = self.use_flat.isChecked()
@@ -159,6 +167,7 @@ class AlignmentSettingsDialog(QDialog):
         self.settings.setValue("alignment/reference", self.reference.currentIndex())
         self.settings.setValue("alignment/sigma", alignment.sigma)
         self.settings.setValue("alignment/max_stars", alignment.max_stars)
+        self.settings.setValue("alignment/use_wcs", alignment.use_wcs)
         self.settings.setValue("calibration/use_darks", calibration.use_darks)
         self.settings.setValue("calibration/use_biases", calibration.use_biases)
         self.settings.setValue("calibration/use_flats", calibration.use_flats)
@@ -302,12 +311,105 @@ class StackingSettingsDialog(QDialog):
         selection_layout.addRow("値", self.selection_value)
         layout.addRow(selection)
 
+        drizzle = project.settings.processing.drizzle
+        drizzle_box = QGroupBox("Drizzle（恒星位置合わせ時）")
+        drizzle_layout = QFormLayout(drizzle_box)
+        self.drizzle_enabled = QCheckBox("Drizzleを使用")
+        self.drizzle_enabled.setChecked(drizzle.enabled)
+        self.drizzle_scale = QComboBox()
+        self.drizzle_scale.addItem("2x（画素数4倍）", 2)
+        self.drizzle_scale.addItem("3x（画素数9倍）", 3)
+        self.drizzle_scale.setCurrentIndex(max(0, self.drizzle_scale.findData(drizzle.scale)))
+        self.drizzle_pixfrac = QDoubleSpinBox()
+        self.drizzle_pixfrac.setRange(0.1, 1.0)
+        self.drizzle_pixfrac.setSingleStep(0.05)
+        self.drizzle_pixfrac.setValue(drizzle.pixfrac)
+        drizzle_layout.addRow(self.drizzle_enabled)
+        drizzle_layout.addRow("倍率", self.drizzle_scale)
+        drizzle_layout.addRow("Pixfrac", self.drizzle_pixfrac)
+        layout.addRow(drizzle_box)
+
+        cosmetic = project.settings.processing.cosmetic_correction
+        cosmetic_box = QGroupBox("Bad Pixel補正")
+        cosmetic_layout = QFormLayout(cosmetic_box)
+        self.cosmetic_enabled = QCheckBox("Bad Pixel Mapで補正")
+        self.cosmetic_enabled.setChecked(cosmetic.enabled)
+        self.bad_pixel_path = QLineEdit(
+            str(cosmetic.bad_pixel_map_path) if cosmetic.bad_pixel_map_path else ""
+        )
+        bad_pixel_browse = QPushButton("選択...")
+        bad_pixel_browse.clicked.connect(self._browse_bad_pixel_map)
+        bad_pixel_row = QHBoxLayout()
+        bad_pixel_row.addWidget(self.bad_pixel_path)
+        bad_pixel_row.addWidget(bad_pixel_browse)
+        self.bad_pixel_method = QComboBox()
+        self.bad_pixel_method.addItem("Median", "median")
+        self.bad_pixel_method.addItem("距離加重補間", "bilinear")
+        self.bad_pixel_method.setCurrentIndex(
+            max(0, self.bad_pixel_method.findData(cosmetic.method))
+        )
+        cosmetic_layout.addRow(self.cosmetic_enabled)
+        cosmetic_layout.addRow("Bad Pixel Map", bad_pixel_row)
+        cosmetic_layout.addRow("補間方式", self.bad_pixel_method)
+        layout.addRow(cosmetic_box)
+
+        artifacts = project.settings.processing.artifact_masks
+        artifact_box = QGroupBox("電線・局所障害物")
+        artifact_layout = QFormLayout(artifact_box)
+        self.artifact_masks_enabled = QCheckBox(
+            f"登録済みマスクを使用（{len(artifacts.mask_paths)}フレーム）"
+        )
+        self.artifact_masks_enabled.setChecked(artifacts.enabled)
+        artifact_note = QLabel(
+            "マスクはメイン画面の「追加処理 → 電線・障害物マスク」でフレームごとに作成します。"
+        )
+        artifact_note.setWordWrap(True)
+        artifact_layout.addRow(self.artifact_masks_enabled)
+        artifact_layout.addRow(artifact_note)
+        layout.addRow(artifact_box)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _browse_bad_pixel_map(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Bad Pixel Mapを選択",
+            str(last_dialog_directory(self.settings)),
+            "Images (*.fits *.fit *.fts *.tif *.tiff *.png)",
+        )
+        if path:
+            remember_dialog_path(self.settings, path)
+            self.bad_pixel_path.setText(path)
+
     def accept(self) -> None:
+        if self.drizzle_enabled.isChecked():
+            if not self.use_alignment_btn.isChecked():
+                QMessageBox.warning(self, "Drizzle", "Drizzleには恒星位置合わせが必要です。")
+                return
+            if self.method.currentData() not in (StackingMethod.AVERAGE, StackingMethod.ADD):
+                QMessageBox.warning(
+                    self, "Drizzle", "DrizzleではAverageまたはAddを選択してください。"
+                )
+                return
+            if self.moving_basis_btn.isChecked():
+                QMessageBox.warning(self, "Drizzle", "移動天体基準ではDrizzleを使用できません。")
+                return
+        bad_pixel_path = self.bad_pixel_path.text().strip()
+        if self.cosmetic_enabled.isChecked() and not bad_pixel_path:
+            QMessageBox.warning(self, "Bad Pixel補正", "Bad Pixel Mapを選択してください。")
+            return
+        if bad_pixel_path and not Path(bad_pixel_path).is_file():
+            QMessageBox.warning(self, "Bad Pixel補正", "指定したBad Pixel Mapが見つかりません。")
+            return
+        artifacts = self.project.settings.processing.artifact_masks
+        if self.artifact_masks_enabled.isChecked() and not artifacts.mask_paths:
+            QMessageBox.warning(
+                self, "電線・障害物除去", "先にフレームごとの障害物マスクを作成してください。"
+            )
+            return
         if self.moving_basis_btn.isChecked():
             if not self.use_alignment_btn.isChecked():
                 QMessageBox.warning(
@@ -337,6 +439,15 @@ class StackingSettingsDialog(QDialog):
         )
         self.project.settings.processing.frame_selection.mode = self.selection_mode.currentData()
         self.project.settings.processing.frame_selection.value = self.selection_value.value()
+        drizzle = self.project.settings.processing.drizzle
+        drizzle.enabled = self.drizzle_enabled.isChecked()
+        drizzle.scale = self.drizzle_scale.currentData()
+        drizzle.pixfrac = self.drizzle_pixfrac.value()
+        cosmetic = self.project.settings.processing.cosmetic_correction
+        cosmetic.enabled = self.cosmetic_enabled.isChecked()
+        cosmetic.bad_pixel_map_path = Path(bad_pixel_path) if bad_pixel_path else None
+        cosmetic.method = self.bad_pixel_method.currentData()
+        artifacts.enabled = self.artifact_masks_enabled.isChecked()
         self.settings.setValue("stacking/method", self.project.settings.light_frame.method)
         self.settings.setValue("stacking/sigma", self.sigma.value())
         self.settings.setValue("stacking/iterations", self.iterations.value())

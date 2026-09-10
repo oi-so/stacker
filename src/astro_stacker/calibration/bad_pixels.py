@@ -19,6 +19,10 @@ def detect_bad_pixels(
         data = data[..., 0]
     if data.ndim != 2:
         raise ValueError("Bad pixel detection expects a mono/Bayer master frame")
+    if data.size == 0 or min(data.shape) < 3:
+        raise ValueError("Bad pixel detection requires a non-empty 2D frame")
+    if not np.isfinite(data).all():
+        raise ValueError("Bad pixel detection input contains NaN or infinite values")
     local = median_filter(data, size=5, mode="reflect")
     residual = data - local
     median = float(np.nanmedian(residual))
@@ -44,7 +48,12 @@ def correct_bad_pixels(
     data = np.asarray(image, dtype=np.float32)
     squeeze = data.ndim == 3 and data.shape[-1] == 1
     work = data[..., 0] if squeeze else data
-    bad = np.asarray(bad_pixel_map) > 0
+    mask = np.asarray(bad_pixel_map)
+    if mask.ndim == 3 and mask.shape[-1] == 1:
+        mask = mask[..., 0]
+    if mask.ndim != 2 or not np.isfinite(mask).all():
+        raise ValueError("Bad pixel map must be a finite 2D mono image")
+    bad = mask > 0
     if bad.shape != work.shape[:2]:
         raise ValueError("Bad pixel map shape does not match image")
     if method not in {"median", "bilinear"}:

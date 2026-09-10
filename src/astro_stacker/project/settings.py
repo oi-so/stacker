@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 
 class StackingMethod(StrEnum):
@@ -33,6 +34,28 @@ class StackingSettings:
     use_quality_weights: bool = False
     exposure_normalization: bool = False
     background_normalization: str = "none"
+
+
+@dataclass
+class DrizzleSettings:
+    enabled: bool = False
+    scale: int = 2
+    pixfrac: float = 0.8
+
+
+@dataclass
+class CosmeticCorrectionSettings:
+    enabled: bool = False
+    bad_pixel_map_path: Path | None = None
+    method: str = "median"
+
+
+@dataclass
+class ArtifactMaskSettings:
+    enabled: bool = False
+    mask_paths: dict[Path, Path] = field(default_factory=dict)
+    line_width: float = 8.0
+    feather: float = 3.0
 
 
 class InvalidPixelPolicy(StrEnum):
@@ -154,6 +177,11 @@ class ProcessingOptions:
     hdr: HDRSettings = field(default_factory=HDRSettings)
     timelapse: TimelapseSettings = field(default_factory=TimelapseSettings)
     nightscape: NightscapeSettings = field(default_factory=NightscapeSettings)
+    drizzle: DrizzleSettings = field(default_factory=DrizzleSettings)
+    cosmetic_correction: CosmeticCorrectionSettings = field(
+        default_factory=CosmeticCorrectionSettings
+    )
+    artifact_masks: ArtifactMaskSettings = field(default_factory=ArtifactMaskSettings)
     parallel_workers: int = 0
 
 
@@ -173,6 +201,7 @@ class AlignmentSettings:
     sigma: float = 5.0
     reference_mode: ReferenceMode = ReferenceMode.MIDDLE
     calibrate_before_align: bool = True
+    use_wcs: bool = False
     mode: AlignmentMode = AlignmentMode.ALL
 
 

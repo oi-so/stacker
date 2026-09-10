@@ -28,7 +28,10 @@ Astro Stacker は、天体写真・星景写真・新星景写真・移動天体
 - 星空・地上・マスク・光害フレームを個別出力できる新星景処理
 - 地上固定Alignment、手動Polygon編集、移動方向の解析と時間グループ分割
 - Sliding Window対応のタイムラプス用n枚スタック
-- Hot / Cold Pixel・異常列を検出するBad Pixel Map生成
+- 2x / 3x Drizzle（Pixfrac指定、Average / Add）
+- Hot / Cold Pixel・異常列を検出するBad Pixel Map生成とCFA対応補正
+- 手動Polyline／半自動候補検出による電線・局所障害物のWeight Mask除外
+- FITS WCSによる高速位置合わせと、画像準備のメモリ制限付き並列先読み
 - 容量制限付き画像キャッシュと、RAM / 一時 memmap を使い分けるスタック処理
 - スタック結果の `stacked*.fits` 自動保存
 - 画像プレビュー、ズーム、検出星の表示
@@ -43,12 +46,12 @@ Astro Stacker は、天体写真・星景写真・新星景写真・移動天体
 
 ## 主な制限
 
-- Drizzle
 - クロップ範囲選択
 - 元画像のMakerNoteなど独自EXIFの完全継承
 - 言語切り替えの即時反映
 - RAW以外を含む非線形画像での露出正規化は、入力の現像状態に依存する
-- Bad Pixel Mapは生成・保存に対応し、既存画像への対話的な適用画面は今後の拡張対象
+- DrizzleはMedian / Sigma Clipping / 比較明暗では使用できない
+- 電線などで全フレームの同一出力画素が隠れる場合は生成補完せず無効画素になる
 
 ## 対応ファイル形式
 

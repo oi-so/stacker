@@ -1,20 +1,22 @@
 """Top-level processing pipeline orchestration."""
 
-from pathlib import Path
 import logging
+from pathlib import Path
 
 import numpy as np
 
+from ..calibration.bad_pixels import BadPixelCorrectedFrameProvider
+from ..calibration.calibration import Calibrator, MasterFrameBuilder
+from ..core.provider import CalibratedFrameProvider, DebayerFrameProvider, ImageManagerProvider
 from ..io.image_data import AstroImage
 from ..io.image_manager import ImageManager
 from ..io.loader import load_info
 from ..io.saver import save_fits
-from ..core.provider import ImageManagerProvider, DebayerFrameProvider, CalibratedFrameProvider
-from ..project.project import Project
-from ..project.settings import DebayerTiming, StackingMethod
-from ..calibration.calibration import MasterFrameBuilder, Calibrator
+from ..masks.weights import FileMaskProvider
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.stacking_pipeline import StackingPipeline
+from ..project.project import Project
+from ..project.settings import DebayerTiming, StackingMethod
 
 logger = logging.getLogger(__name__)
 
@@ -193,6 +195,47 @@ class ProcessingPipeline:
         project.output_path = path
         logger.info("Auto-saved stacked result: %s", path)
 
+    def _prepare_alignment_provider(self, project, progress=None, is_cancelled=None):
+        calibration = project.settings.calibration
+        provider = ImageManagerProvider(self.manager)
+        self._build_master_frames(
+            project, MasterFrameBuilder(provider), progress, is_cancelled
+        )
+        calibrator = Calibrator(project, calibration)
+        calibrate_before_align = getattr(
+            project.settings.alignment,
+            "calibrate_before_align",
+            CALIBRATE_BEFORE_ALIGN,
+        )
+        cosmetic = project.settings.processing.cosmetic_correction
+        if calibrate_before_align or cosmetic.enabled:
+            provider = CalibratedFrameProvider(provider, calibrator)
+        if cosmetic.enabled:
+            if cosmetic.bad_pixel_map_path is None:
+                raise ValueError("Bad Pixel補正が有効ですが、Bad Pixel Mapが未指定です。")
+            if not cosmetic.bad_pixel_map_path.exists():
+                raise ValueError(f"Bad Pixel Mapが見つかりません: {cosmetic.bad_pixel_map_path}")
+            bad_pixel_frame = load_info(cosmetic.bad_pixel_map_path)
+            bad_pixel_map = self.manager.get_image(bad_pixel_frame)
+            provider = BadPixelCorrectedFrameProvider(
+                provider,
+                bad_pixel_map,
+                method=cosmetic.method,
+            )
+        return provider, calibrator, calibrate_before_align, cosmetic
+
+    def run_alignment(self, project: Project, progress=None, is_cancelled=None) -> None:
+        provider, _, _, _ = self._prepare_alignment_provider(
+            project, progress, is_cancelled
+        )
+        AlignmentPipeline(provider).run(
+            project,
+            project.settings.alignment,
+            progress=progress,
+            is_cancelled=is_cancelled,
+            requested_workers=project.settings.processing.parallel_workers,
+        )
+
     def run(self, project: Project, progress=None, is_cancelled=None, skip_alignment = False) -> None:
         project.light_frames = [
             frame for frame in project.light_frames
@@ -206,46 +249,61 @@ class ProcessingPipeline:
 
         # The project owns calibration choices; adding files enables their
         # category in the controller, but a saved unchecked choice stays off.
-        calibration = project.settings.calibration
-
-        provider = ImageManagerProvider(self.manager)
-        builder = MasterFrameBuilder(provider)
-
-        self._build_master_frames(project, builder, progress, is_cancelled)
-
-        calibrator = Calibrator(project, calibration)
-        calibrate_before_align = getattr(
-            project.settings.alignment,
-            "calibrate_before_align",
-            CALIBRATE_BEFORE_ALIGN,
+        provider, calibrator, calibrate_before_align, cosmetic = (
+            self._prepare_alignment_provider(project, progress, is_cancelled)
         )
-        if calibrate_before_align:
-            provider = CalibratedFrameProvider(provider, calibrator)
 
         if not skip_alignment and not project.is_alignment_valid():
             logger.info("Starting alignment")
             alignment_pipeline = AlignmentPipeline(provider)
-            alignment_pipeline.run(project, project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
+            alignment_pipeline.run(
+                project,
+                project.settings.alignment,
+                progress=progress,
+                is_cancelled=is_cancelled,
+                requested_workers=project.settings.processing.parallel_workers,
+            )
         else:
             if skip_alignment:
                 logger.info("Skipping alignment")
             else:
                 logger.info("Using existing alignment")
 
-        if is_cancelled and is_cancelled(): return
+        if is_cancelled and is_cancelled():
+            return
 
-        if not calibrate_before_align:
+        if not calibrate_before_align and not cosmetic.enabled:
             provider = CalibratedFrameProvider(provider, calibrator)
 
         if progress:
             progress("スタック", 0, 1, "準備中")
         stack_provider = provider
-        if project.settings.debayer_timing == DebayerTiming.BEFORE_STACK:
+        if (
+            project.settings.debayer_timing == DebayerTiming.BEFORE_STACK
+            or project.settings.processing.drizzle.enabled
+        ):
             stack_provider = DebayerFrameProvider(stack_provider)
 
+        source_masks = None
+        artifact_settings = project.settings.processing.artifact_masks
+        if artifact_settings.enabled:
+            if not artifact_settings.mask_paths:
+                raise ValueError("電線・障害物除去が有効ですが、マスクが登録されていません。")
+
+            def load_mask(path: Path) -> np.ndarray:
+                return self.manager.get_image(load_info(path))
+
+            source_masks = FileMaskProvider(artifact_settings.mask_paths, load_mask)
+
         logger.info("Starting stacking")
-        stacking_pipeline = StackingPipeline(stack_provider)
-        stacking_pipeline.run(project, project.settings.light_frame, progress=progress, is_cancelled=is_cancelled)
+        stacking_pipeline = StackingPipeline(stack_provider, source_masks)
+        stacking_pipeline.run(
+            project,
+            project.settings.light_frame,
+            progress=progress,
+            is_cancelled=is_cancelled,
+            requested_workers=project.settings.processing.parallel_workers,
+        )
 
         if progress:
             progress("自動保存中", 0, 1, "stacked.fits")

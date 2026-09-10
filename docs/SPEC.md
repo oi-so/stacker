@@ -232,7 +232,7 @@ flowchart TD
 
 ## 既知の制限
 
-- Plate Solve、Drizzle、クロップ、ホットピクセル除去は未実装。
+- クロップ範囲選択は未実装。Plate Solve、Drizzle、Bad Pixel補正は実装済み。
 - Sigma ClippingのUI設定のうち繰り返し回数は未反映。
 - Median/Sigma Clipは一時memmapへ全フレームを書き出し、行チャンク単位で計算する。メモリ使用量は抑えるが、
   一時ディスク容量は概ね `枚数 * 高さ * 幅 * チャンネル * 4 bytes` 必要。

@@ -39,7 +39,6 @@ from ..io.loader import load_info
 from ..io.saver import save_image
 from ..masks.stars import generate_star_mask
 from ..moving_object.marker import moving_object_preview_pixel
-from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.extended_pipeline import HDRPipeline, TimelapseStackPipeline
 from ..pipeline.nightscape_pipeline import NightscapePipeline
 from ..pipeline.processing_pipeline import ProcessingPipeline
@@ -65,6 +64,7 @@ from .panels.log_panel import LogPanel, QtLogHandler
 from .panels.project_tree import ProjectTree
 from .path_history import last_dialog_directory, remember_dialog_path
 from .viewer.image_viewer import ImageViewer, StarDisplayMode
+from .wire_mask_editor import WireMaskEditorDialog
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +227,8 @@ class MainWindow(QMainWindow):
         self.ground_mask_action.triggered.connect(self._create_ground_mask)
         self.bad_pixels_action = QAction("Bad Pixel Mapを作成...", self)
         self.bad_pixels_action.triggered.connect(self._create_bad_pixel_map)
+        self.artifact_mask_action = QAction("電線・障害物マスクを作成...", self)
+        self.artifact_mask_action.triggered.connect(self._create_artifact_mask)
         self.nightscape_action = QAction("新星景...", self)
         self.nightscape_action.triggered.connect(self._run_nightscape)
 
@@ -248,6 +250,7 @@ class MainWindow(QMainWindow):
             self.ground_mask_action,
             self.timelapse_action,
             self.bad_pixels_action,
+            self.artifact_mask_action,
         )
 
     def _create_toolbar(self):
@@ -626,8 +629,9 @@ class MainWindow(QMainWindow):
             return
 
         def work(progress, is_cancelled):
-            provider = ImageManagerProvider(self.manager)
-            AlignmentPipeline(provider).run(self.controller.project, self.controller.project.settings.alignment, progress=progress, is_cancelled=is_cancelled)
+            ProcessingPipeline(self.manager).run_alignment(
+                self.controller.project, progress=progress, is_cancelled=is_cancelled
+            )
 
         self._run_worker(work, on_success=self._alignment_finished)
         self.viewer.viewport().update()
@@ -939,6 +943,18 @@ class MainWindow(QMainWindow):
                 self, "Bad Pixel Map", "DarkまたはBiasフレームを選択してください。"
             )
             return
+        allowed_frames = [
+            *self.controller.project.calibration_frames.darks,
+            *self.controller.project.calibration_frames.biases,
+        ]
+        if not any(frame is candidate for candidate in allowed_frames):
+            QMessageBox.warning(
+                self,
+                "Bad Pixel Map",
+                "Bad Pixel MapはDark、Bias、Master Dark、Master Biasから作成してください。\n"
+                "推奨順は Master Dark → Master Bias → 単体Dark → 単体Bias です。",
+            )
+            return
         dialog = SaveDialog(frame.info.path.parent, self)
         dialog.setWindowTitle("Bad Pixel Mapを保存")
         dialog.path.setText(str(frame.info.path.with_name(frame.info.path.stem + "_bpm.fits")))
@@ -954,6 +970,50 @@ class MainWindow(QMainWindow):
             save_image(bpm, path, metadata=frame.info.exif, frame_type="bad_pixel_map", **options)
 
         self._run_worker(work, on_success=lambda: logger.info("Bad Pixel Mapを保存しました: %s", path))
+
+    def _create_artifact_mask(self):
+        frame = self._selected_frame
+        if frame is None or not any(
+            frame is candidate for candidate in self.controller.project.light_frames
+        ):
+            QMessageBox.information(
+                self, "電線・障害物マスク", "Lightフレームを1枚選択してください。"
+            )
+            return
+        settings = self.controller.project.settings.processing.artifact_masks
+        editor = WireMaskEditorDialog(
+            self.manager.get_image(frame),
+            line_width=settings.line_width,
+            feather=settings.feather,
+            parent=self,
+        )
+        if editor.exec() != WireMaskEditorDialog.DialogCode.Accepted:
+            return
+        dialog = SaveDialog(frame.info.path.parent, self)
+        dialog.setWindowTitle("電線・障害物Weight Maskを保存")
+        dialog.path.setText(
+            str(frame.info.path.with_name(frame.info.path.stem + "_artifact_mask.fits"))
+        )
+        if dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        path, options = dialog.selected()
+        try:
+            save_image(editor.mask(), path, metadata=frame.info.exif, **options)
+        except Exception as exc:
+            ErrorDialog.show_exception(self, "障害物マスク保存エラー", exc)
+            return
+        targets = (
+            self.controller.project.light_frames
+            if editor.apply_to_all.isChecked()
+            else [frame]
+        )
+        for target in targets:
+            settings.mask_paths[target.info.path] = path
+        settings.line_width = editor.width.value()
+        settings.feather = editor.feather.value()
+        settings.enabled = True
+        self._mark_dirty()
+        logger.info("障害物マスクを%dフレームへ登録しました: %s", len(targets), path)
 
     @Slot(object)
     def _on_worker_failed_trigger(self, exc):

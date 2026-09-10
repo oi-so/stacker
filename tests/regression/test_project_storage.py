@@ -66,6 +66,17 @@ def test_project_roundtrip_and_relocation(tmp_path):
     folder = tmp_path / "original"
     project = make_project(folder)
     project.light_frames[-1].info.enabled = False
+    bad_pixel_map = folder / "bad-pixels.fits"
+    artifact_mask = folder / "wire-mask.fits"
+    save_fits(np.zeros((12, 16), dtype="float32"), bad_pixel_map)
+    save_fits(np.ones((12, 16), dtype="float32"), artifact_mask)
+    project.settings.processing.cosmetic_correction.enabled = True
+    project.settings.processing.cosmetic_correction.bad_pixel_map_path = bad_pixel_map
+    project.settings.processing.artifact_masks.enabled = True
+    project.settings.processing.artifact_masks.mask_paths[
+        project.light_frames[0].info.path
+    ] = artifact_mask
+    project.settings.processing.drizzle.enabled = True
     project.alignment_signature = project.make_alignment_signature()
     project.settings.light_frame.method = StackingMethod.MINMAX_MEAN
     project.settings.light_frame.iterations = 4
@@ -93,6 +104,15 @@ def test_project_roundtrip_and_relocation(tmp_path):
     assert restored.light_frames[-1].info.enabled is False
     assert restored.settings.light_frame.method is StackingMethod.MINMAX_MEAN
     assert restored.settings.light_frame.iterations == 4
+    assert restored.settings.processing.cosmetic_correction.enabled
+    assert (
+        restored.settings.processing.cosmetic_correction.bad_pixel_map_path
+        == moved / "bad-pixels.fits"
+    )
+    assert restored.settings.processing.artifact_masks.mask_paths[
+        moved / "0.fits"
+    ] == moved / "wire-mask.fits"
+    assert restored.settings.processing.drizzle.enabled
     assert restored.notes == "撮影条件のメモ"
     assert restored.settings.moving_object.anchors[0].frame_path == moved / "0.fits"
     assert restored.view_state["selected"] == moved / "1.fits"
