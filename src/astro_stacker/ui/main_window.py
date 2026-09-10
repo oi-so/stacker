@@ -16,12 +16,14 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
     QSplitter,
     QTabWidget,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -61,6 +63,7 @@ from .panels.frame_table import FrameTable
 from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel, QtLogHandler
 from .panels.project_tree import ProjectTree
+from .path_history import last_dialog_directory, remember_dialog_path
 from .viewer.image_viewer import ImageViewer, StarDisplayMode
 
 logger = logging.getLogger(__name__)
@@ -180,11 +183,72 @@ class MainWindow(QMainWindow):
         layout.addWidget(main_splitter)
         layout.addLayout(progress_layout)
 
+        self._create_actions()
         self._create_toolbar()
         self._create_menu()
         self._connect_signals()
         self._refresh_tables()
         self._update_actions()
+
+    def _create_actions(self):
+        self.project_open_action = QAction("プロジェクトを開く...", self)
+        self.project_open_action.setIconText("📁\nプロジェクトを開く")
+        self.project_open_action.setShortcut("Ctrl+O")
+        self.project_open_action.triggered.connect(self._open_project)
+        self.project_save_action = QAction("プロジェクトを保存", self)
+        self.project_save_action.setIconText("💾\nプロジェクト保存")
+        self.project_save_action.setShortcut("Ctrl+S")
+        self.project_save_action.triggered.connect(lambda: self._save_project())
+        self.project_save_as_action = QAction("プロジェクトを名前を付けて保存...", self)
+        self.project_save_as_action.setShortcut("Ctrl+Shift+S")
+        self.project_save_as_action.triggered.connect(lambda: self._save_project(save_as=True))
+        self.project_notes_action = QAction("プロジェクトのメモ...", self)
+        self.project_notes_action.triggered.connect(self._edit_project_notes)
+        self.project_history_action = QAction("位置合わせ履歴...", self)
+        self.project_history_action.triggered.connect(self._show_project_history)
+
+        self.add_action = QAction("📂\nフレーム追加", self)
+        self.align_action = QAction("▶\n位置合わせ", self)
+        self.stack_action = QAction("⚙\nスタック", self)
+        self.save_action = QAction("💾\n保存", self)
+        self.platesolve_action = QAction("🔭\nPlate Solve", self)
+        self.reset_action = QAction("❌\nリセット", self)
+        self.platesolve_action.setEnabled(False)
+
+        self.aligned_export_action = QAction("位置合わせ済み画像を書き出す...", self)
+        self.aligned_export_action.triggered.connect(self._export_aligned_frames)
+        self.star_mask_action = QAction("星マスクを作成...", self)
+        self.star_mask_action.triggered.connect(self._create_star_mask)
+        self.hdr_action = QAction("HDR...", self)
+        self.hdr_action.triggered.connect(self._run_hdr)
+        self.timelapse_action = QAction("タイムラプス用スタック...", self)
+        self.timelapse_action.triggered.connect(self._run_timelapse_stack)
+        self.ground_mask_action = QAction("地上領域を自動推定...", self)
+        self.ground_mask_action.triggered.connect(self._create_ground_mask)
+        self.bad_pixels_action = QAction("Bad Pixel Mapを作成...", self)
+        self.bad_pixels_action.triggered.connect(self._create_bad_pixel_map)
+        self.nightscape_action = QAction("新星景...", self)
+        self.nightscape_action.triggered.connect(self._run_nightscape)
+
+        self.add_action.triggered.connect(
+            lambda: self._on_add_frames(self.frame_table.current_frame_type())
+        )
+        self.align_action.triggered.connect(self._run_alignment)
+        self.stack_action.triggered.connect(self._on_stack)
+        self.save_action.triggered.connect(self._save_result)
+        self.platesolve_action.triggered.connect(self._run_plate_solve)
+        self.reset_action.triggered.connect(self._reset_project)
+
+    def _processing_actions(self):
+        return (
+            self.aligned_export_action,
+            self.star_mask_action,
+            self.hdr_action,
+            self.nightscape_action,
+            self.ground_mask_action,
+            self.timelapse_action,
+            self.bad_pixels_action,
+        )
 
     def _create_toolbar(self):
         toolbar = QToolBar("Main")
@@ -197,15 +261,9 @@ class MainWindow(QMainWindow):
         self.zoom_100_button = QPushButton("100%")
         self.zoom_fit_button = QPushButton("Fit")
 
-        self.add_action = QAction("📂\nフレーム追加", self)
-        self.align_action = QAction("▶\n位置合わせ", self)
-        self.stack_action = QAction("⚙\nスタック", self)
-        self.save_action = QAction("💾\n保存", self)
-        self.platesolve_action = QAction("🔭\nPlate Solve", self)
-        self.reset_action = QAction("❌\nリセット", self)
-        self.platesolve_action.setEnabled(False)
-
         for action in (
+            self.project_open_action,
+            self.project_save_action,
             self.add_action,
             self.align_action,
             self.stack_action,
@@ -215,15 +273,15 @@ class MainWindow(QMainWindow):
         ):
             toolbar.addAction(action)
 
-        self.add_action.triggered.connect(
-            lambda: self._on_add_frames(self.frame_table.current_frame_type())
-        )
-        self.align_action.triggered.connect(self._run_alignment)
-        self.stack_action.triggered.connect(self._on_stack)
-        self.save_action.triggered.connect(self._save_result)
-        self.platesolve_action.triggered.connect(self._run_plate_solve)
-        self.reset_action.triggered.connect(self._reset_project)
-
+        processing_button = QToolButton(toolbar)
+        processing_button.setText("🧰\n追加処理")
+        processing_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        processing_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        processing_menu = QMenu(processing_button)
+        for action in self._processing_actions():
+            processing_menu.addAction(action)
+        processing_button.setMenu(processing_menu)
+        toolbar.addWidget(processing_button)
 
         toolbar.addWidget(self.zoom_out_button)
         toolbar.addWidget(self.zoom_label)
@@ -274,19 +332,6 @@ class MainWindow(QMainWindow):
 
     def _create_menu(self):
         file_menu = self.menuBar().addMenu("ファイル")
-        self.project_open_action = QAction("プロジェクトを開く...", self)
-        self.project_open_action.setShortcut("Ctrl+O")
-        self.project_open_action.triggered.connect(self._open_project)
-        self.project_save_action = QAction("プロジェクトを保存", self)
-        self.project_save_action.setShortcut("Ctrl+S")
-        self.project_save_action.triggered.connect(lambda: self._save_project())
-        self.project_save_as_action = QAction("プロジェクトを名前を付けて保存...", self)
-        self.project_save_as_action.setShortcut("Ctrl+Shift+S")
-        self.project_save_as_action.triggered.connect(lambda: self._save_project(save_as=True))
-        self.project_notes_action = QAction("プロジェクトのメモ...", self)
-        self.project_notes_action.triggered.connect(self._edit_project_notes)
-        self.project_history_action = QAction("位置合わせ履歴...", self)
-        self.project_history_action.triggered.connect(self._show_project_history)
         for action in self._project_actions():
             file_menu.addAction(action)
         file_menu.addSeparator()
@@ -296,27 +341,8 @@ class MainWindow(QMainWindow):
             file_menu.addAction(action)
 
         process_menu = self.menuBar().addMenu("処理")
-        aligned_export = QAction("位置合わせ済み画像を書き出す...", self)
-        aligned_export.triggered.connect(self._export_aligned_frames)
-        star_mask = QAction("星マスクを作成...", self)
-        star_mask.triggered.connect(self._create_star_mask)
-        hdr = QAction("HDR...", self)
-        hdr.triggered.connect(self._run_hdr)
-        timelapse = QAction("タイムラプス用スタック...", self)
-        timelapse.triggered.connect(self._run_timelapse_stack)
-        ground_mask = QAction("地上領域を自動推定...", self)
-        ground_mask.triggered.connect(self._create_ground_mask)
-        bad_pixels = QAction("Bad Pixel Mapを作成...", self)
-        bad_pixels.triggered.connect(self._create_bad_pixel_map)
-        nightscape = QAction("新星景...", self)
-        nightscape.triggered.connect(self._run_nightscape)
-        process_menu.addAction(aligned_export)
-        process_menu.addAction(star_mask)
-        process_menu.addAction(hdr)
-        process_menu.addAction(timelapse)
-        process_menu.addAction(ground_mask)
-        process_menu.addAction(bad_pixels)
-        process_menu.addAction(nightscape)
+        for action in self._processing_actions():
+            process_menu.addAction(action)
         process_menu.addSeparator()
         process_menu.addAction(self.align_action)
         process_menu.addAction(self.stack_action)
@@ -365,10 +391,12 @@ class MainWindow(QMainWindow):
         from ..project.storage import save_project
         path = self.controller.project.project_path
         if save_as or path is None:
+            default_path = path or last_dialog_directory(self.settings) / "Untitled.astrostacker"
             name, _ = QFileDialog.getSaveFileName(self, "プロジェクトを保存",
-                str(path or Path.cwd() / "Untitled.astrostacker"), "Astro Stacker (*.astrostacker)")
+                str(default_path), "Astro Stacker (*.astrostacker)")
             if not name:
                 return False
+            remember_dialog_path(self.settings, name)
             path = Path(name)
             if path.suffix.lower() != ".astrostacker":
                 path = path.with_name(path.name + ".astrostacker")
@@ -394,9 +422,15 @@ class MainWindow(QMainWindow):
 
     def _open_project(self):
         from ..project.storage import load_project
-        name, _ = QFileDialog.getOpenFileName(self, "プロジェクトを開く", "", "Astro Stacker (*.astrostacker)")
+        name, _ = QFileDialog.getOpenFileName(
+            self,
+            "プロジェクトを開く",
+            str(last_dialog_directory(self.settings)),
+            "Astro Stacker (*.astrostacker)",
+        )
         if not name or not self._confirm_discard():
             return
+        remember_dialog_path(self.settings, name)
         try:
             project, warnings = load_project(Path(name))
         except Exception as exc:
@@ -525,10 +559,11 @@ class MainWindow(QMainWindow):
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             f"{frame_type.ja_name}を追加",
-            "",
+            str(last_dialog_directory(self.settings)),
             "Images (*.fits *.fit *.fts *.arw *.cr2 *.cr3 *.nef *.raf *.png *.jpg *.jpeg *.tif *.tiff)",
         )
         if paths:
+            remember_dialog_path(self.settings, paths[0])
             self.controller.add_files(frame_type, [Path(path) for path in paths])
             self._update_actions()
 
@@ -1016,6 +1051,8 @@ class MainWindow(QMainWindow):
     def _set_busy(self, busy: bool):
         self._busy = busy
         for action in self._project_actions():
+            action.setEnabled(not busy)
+        for action in self._processing_actions():
             action.setEnabled(not busy)
         for action in (
             self.add_action,

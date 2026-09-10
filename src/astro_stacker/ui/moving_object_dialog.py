@@ -125,6 +125,7 @@ class MovingObjectSettingsDialog(QDialog):
         self._corrected_starts: dict[Path, datetime] = {}
         self._catalog_results: list[CatalogObject] = []
         self._ephemeris_ready = False
+        self._network_label = "通信処理"
 
         self.setWindowTitle("移動天体スタック設定")
         self.resize(1000, 760)
@@ -320,15 +321,26 @@ class MovingObjectSettingsDialog(QDialog):
         worker = _NetworkWorker(operation)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.succeeded.connect(succeeded)
-        worker.failed.connect(lambda exc: QMessageBox.critical(self, f"{label}エラー", str(exc)))
+        worker.succeeded.connect(succeeded, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._network_failed, Qt.ConnectionType.QueuedConnection)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._network_finished)
         self._thread = thread
         self._worker = worker
+        self._network_label = label
         thread.start()
+
+    @Slot(object)
+    def _network_failed(self, exc: Exception) -> None:
+        """Display worker failures on the GUI thread.
+
+        A bound QObject slot with an explicit queued connection is required here:
+        constructing QMessageBox from the network QThread crashes on macOS.
+        """
+        self.solve_status.setText(f"{self._network_label}失敗")
+        QMessageBox.critical(self, f"{self._network_label}エラー", str(exc))
 
     @Slot()
     def _network_finished(self) -> None:
@@ -339,7 +351,15 @@ class MovingObjectSettingsDialog(QDialog):
 
     def _search_catalog(self) -> None:
         self._ephemeris_ready = False
-        query = self.catalog_query.text()
+        query = self.catalog_query.text().strip()
+        if not query:
+            QMessageBox.information(
+                self,
+                "カタログ検索",
+                "彗星・小惑星の名称または符号を入力してください。",
+            )
+            self.catalog_query.setFocus()
+            return
         self._run_network(
             lambda: SmallBodyCatalog().search(query),
             self._catalog_search_succeeded,

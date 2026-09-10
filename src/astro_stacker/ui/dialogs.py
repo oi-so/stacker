@@ -39,6 +39,7 @@ from ..project.settings import (
     StackingMethod,
 )
 from .moving_object_dialog import MovingObjectSettingsDialog
+from .path_history import last_dialog_directory, remember_dialog_path
 
 
 class AlignmentSettingsDialog(QDialog):
@@ -373,6 +374,7 @@ class StackingSettingsDialog(QDialog):
 class SaveDialog(QDialog):
     def __init__(self, default_folder: Path, parent=None):
         super().__init__(parent)
+        self.settings = QSettings("AstroStacker", "AstroStacker")
         self.setWindowTitle("保存")
         layout = QFormLayout(self)
         self.format = QComboBox()
@@ -405,8 +407,16 @@ class SaveDialog(QDialog):
 
     def _browse(self):
         suffix = self.format.currentText().lower().replace("jpeg", "jpg")
-        path, _ = QFileDialog.getSaveFileName(self, "保存", self.path.text(), f"{self.format.currentText()} (*.{suffix})")
+        current = Path(self.path.text())
+        initial = last_dialog_directory(self.settings, current) / current.name
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存",
+            str(initial),
+            f"{self.format.currentText()} (*.{suffix})",
+        )
         if path:
+            remember_dialog_path(self.settings, path)
             self.path.setText(path)
 
     def selected(self) -> tuple[Path, dict]:
@@ -425,6 +435,7 @@ class HDRSettingsDialog(QDialog):
     def __init__(self, project: Project, default_folder: Path, parent=None):
         super().__init__(parent)
         self.project = project
+        self.settings = QSettings("AstroStacker", "AstroStacker")
         self.setWindowTitle("HDR")
         layout = QFormLayout(self)
         self.auto_group = QCheckBox("EXIF撮影条件で自動グループ化")
@@ -489,8 +500,11 @@ class HDRSettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _browse(self):
-        folder = QFileDialog.getExistingDirectory(self, "HDR出力フォルダ", self.output.text())
+        folder = QFileDialog.getExistingDirectory(
+            self, "HDR出力フォルダ", str(last_dialog_directory(self.settings, self.output.text()))
+        )
         if folder:
+            remember_dialog_path(self.settings, folder, directory=True)
             self.output.setText(folder)
 
     def accept(self):
@@ -524,6 +538,7 @@ class TimelapseSettingsDialog(QDialog):
     def __init__(self, project: Project, default_folder: Path, parent=None):
         super().__init__(parent)
         self.project = project
+        self.settings = QSettings("AstroStacker", "AstroStacker")
         self.setWindowTitle("タイムラプス用n枚スタック")
         layout = QFormLayout(self)
         settings = project.settings.processing.timelapse
@@ -563,9 +578,12 @@ class TimelapseSettingsDialog(QDialog):
 
     def _browse(self):
         folder = QFileDialog.getExistingDirectory(
-            self, "タイムラプス出力フォルダ", self.output.text()
+            self,
+            "タイムラプス出力フォルダ",
+            str(last_dialog_directory(self.settings, self.output.text())),
         )
         if folder:
+            remember_dialog_path(self.settings, folder, directory=True)
             self.output.setText(folder)
 
     def accept(self):
@@ -584,6 +602,7 @@ class NightscapeSettingsDialog(QDialog):
     def __init__(self, project: Project, default_folder: Path, parent=None, suggestion=None):
         super().__init__(parent)
         self.project = project
+        self.app_settings = QSettings("AstroStacker", "AstroStacker")
         settings = project.settings.processing.nightscape
         self.setWindowTitle("新星景")
         layout = QFormLayout(self)
@@ -690,18 +709,27 @@ class NightscapeSettingsDialog(QDialog):
         layout.addWidget(buttons)
 
     def _browse_ground(self):
-        paths, _ = QFileDialog.getOpenFileNames(self, "別撮り地上画像")
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "別撮り地上画像", str(last_dialog_directory(self.app_settings))
+        )
         if paths:
+            remember_dialog_path(self.app_settings, paths[0])
             self.ground_paths.setText(";".join(paths))
 
     def _browse_mask(self):
-        path, _ = QFileDialog.getOpenFileName(self, "ユーザー作成マスク")
+        path, _ = QFileDialog.getOpenFileName(
+            self, "ユーザー作成マスク", str(last_dialog_directory(self.app_settings))
+        )
         if path:
+            remember_dialog_path(self.app_settings, path)
             self.user_mask_path.setText(path)
 
     def _browse_output(self):
-        path = QFileDialog.getExistingDirectory(self, "新星景出力", self.output.text())
+        path = QFileDialog.getExistingDirectory(
+            self, "新星景出力", str(last_dialog_directory(self.app_settings, self.output.text()))
+        )
         if path:
+            remember_dialog_path(self.app_settings, path, directory=True)
             self.output.setText(path)
 
     def accept(self):
