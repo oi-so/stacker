@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
         self.ground_mask_action.triggered.connect(self._create_ground_mask)
         self.bad_pixels_action = QAction("Bad Pixel Mapを作成...", self)
         self.bad_pixels_action.triggered.connect(self._create_bad_pixel_map)
-        self.artifact_mask_action = QAction("電線・障害物マスクを作成...", self)
+        self.artifact_mask_action = QAction("電線・電柱・障害物マスクを作成...", self)
         self.artifact_mask_action.triggered.connect(self._create_artifact_mask)
         self.nightscape_action = QAction("新星景...", self)
         self.nightscape_action.triggered.connect(self._run_nightscape)
@@ -977,7 +977,7 @@ class MainWindow(QMainWindow):
             frame is candidate for candidate in self.controller.project.light_frames
         ):
             QMessageBox.information(
-                self, "電線・障害物マスク", "Lightフレームを1枚選択してください。"
+                self, "電線・電柱・障害物マスク", "Lightフレームを1枚選択してください。"
             )
             return
         settings = self.controller.project.settings.processing.artifact_masks
@@ -990,7 +990,7 @@ class MainWindow(QMainWindow):
         if editor.exec() != WireMaskEditorDialog.DialogCode.Accepted:
             return
         dialog = SaveDialog(frame.info.path.parent, self)
-        dialog.setWindowTitle("電線・障害物Weight Maskを保存")
+        dialog.setWindowTitle("電線・電柱・障害物Weight Maskを保存")
         dialog.path.setText(
             str(frame.info.path.with_name(frame.info.path.stem + "_artifact_mask.fits"))
         )
@@ -1217,8 +1217,10 @@ class MainWindow(QMainWindow):
             return
 
         if clicked is align_btn:
-            if not self._show_alignment_dialog(): return
-            if not self._show_stack_dialog(use_aligned_image=True): return
+            if not self._show_alignment_dialog():
+                return
+            if not self._show_stack_dialog(use_aligned_image=True):
+                return
 
             def work(progress, is_cancelled):
                 ProcessingPipeline(self.manager).run(

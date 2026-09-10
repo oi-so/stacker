@@ -28,6 +28,8 @@ from astro_stacker.nightscape import composite_nightscape, light_pollution_frame
 from astro_stacker.normalization import normalize_image
 from astro_stacker.pipeline.extended_pipeline import TimelapseStackPipeline
 from astro_stacker.pipeline.nightscape_pipeline import NightscapePipeline
+from astro_stacker.pipeline.stacking_pipeline import StackingPipeline
+from astro_stacker.project.project import Project
 from astro_stacker.project.settings import (
     NightscapeSettings,
     StackingMethod,
@@ -192,6 +194,27 @@ def test_polyline_mask_has_zero_core_feather_and_untouched_background():
     assert mask[15, 15] == 0
     assert 0 < mask[19, 15] < 1
     assert mask[0, 0] == 1
+
+
+def test_artifact_mask_is_applied_during_stacking():
+    frames = [frame(0), frame(1)]
+    arrays = np.stack(
+        [np.full((4, 5), 2, dtype=np.float32), np.full((4, 5), 10, dtype=np.float32)]
+    )
+    masks = {
+        frames[0].info.path: np.ones((4, 5), dtype=np.float32),
+        frames[1].info.path: np.ones((4, 5), dtype=np.float32),
+    }
+    masks[frames[1].info.path][2, 3] = 0
+    project = Project(light_frames=frames)
+    project.settings.use_alignment = False
+
+    StackingPipeline(Provider(arrays), ArrayMaskProvider(masks)).run(
+        project, project.settings.light_frame
+    )
+
+    assert project.result.stacked_image[0, 0] == pytest.approx(6)
+    assert project.result.stacked_image[2, 3] == pytest.approx(2)
 
 
 def test_drizzle_reconstructs_larger_grid_and_respects_source_mask():

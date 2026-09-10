@@ -107,7 +107,7 @@ class WireMaskEditorDialog(QDialog):
     def __init__(self, image: np.ndarray, *, line_width=8.0, feather=3.0, parent=None):
         super().__init__(parent)
         self.image = np.asarray(image)
-        self.setWindowTitle("電線・障害物マスク編集")
+        self.setWindowTitle("電線・電柱・障害物マスク編集")
         self.resize(1000, 720)
         layout = QVBoxLayout(self)
         self.viewer = WireMaskViewer()
@@ -128,7 +128,7 @@ class WireMaskEditorDialog(QDialog):
         clear = QPushButton("すべて消去")
         clear.clicked.connect(lambda: self.viewer.set_polylines([]))
         self.width = QDoubleSpinBox()
-        self.width.setRange(1, 200)
+        self.width.setRange(1, 2000)
         self.width.setValue(line_width)
         self.width.setSuffix(" px 幅")
         self.width.valueChanged.connect(self._width_changed)

@@ -21,11 +21,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QSpinBox,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..io.image_manager import ImageManager
+from ..io.saver import save_image
 from ..project.project import Project
 from ..project.settings import (
     AlignmentMode,
@@ -40,6 +43,7 @@ from ..project.settings import (
 )
 from .moving_object_dialog import MovingObjectSettingsDialog
 from .path_history import last_dialog_directory, remember_dialog_path
+from .wire_mask_editor import WireMaskEditorDialog
 
 
 class AlignmentSettingsDialog(QDialog):
@@ -96,7 +100,8 @@ class AlignmentSettingsDialog(QDialog):
 
         self.manual_reference = QComboBox()
         for frame in project.light_frames:
-            if not frame.info.enabled: continue
+            if not frame.info.enabled:
+                continue
             self.manual_reference.addItem(
                 frame.info.path.name,
                 frame
@@ -189,7 +194,19 @@ class StackingSettingsDialog(QDialog):
         self.manager = manager
         self.settings = QSettings("AstroStacker", "AstroStacker")
         self.setWindowTitle("スタック設定")
-        layout = QFormLayout(self)
+        self.resize(720, 600)
+        root_layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+        basic_tab = QWidget()
+        quality_tab = QWidget()
+        correction_tab = QWidget()
+        layout = QFormLayout(basic_tab)
+        quality_layout = QFormLayout(quality_tab)
+        correction_layout = QFormLayout(correction_tab)
+        tabs.addTab(basic_tab, "基本")
+        tabs.addTab(quality_tab, "正規化・選別")
+        tabs.addTab(correction_tab, "Drizzle・補正")
+        root_layout.addWidget(tabs)
         self.method = QComboBox()
         for method in StackingMethod:
             self.method.addItem(method.show_name, method)
@@ -289,7 +306,7 @@ class StackingSettingsDialog(QDialog):
         weighting_layout.addRow(self.use_quality_weights)
         weighting_layout.addRow(self.exposure_normalization)
         weighting_layout.addRow("背景正規化", self.background_normalization)
-        layout.addRow(weighting)
+        quality_layout.addRow(weighting)
 
         selection = QGroupBox("フレーム選別")
         selection_layout = QFormLayout(selection)
@@ -309,7 +326,7 @@ class StackingSettingsDialog(QDialog):
         self.selection_value.setValue(current_selection.value)
         selection_layout.addRow("方式", self.selection_mode)
         selection_layout.addRow("値", self.selection_value)
-        layout.addRow(selection)
+        quality_layout.addRow(selection)
 
         drizzle = project.settings.processing.drizzle
         drizzle_box = QGroupBox("Drizzle（恒星位置合わせ時）")
@@ -327,7 +344,7 @@ class StackingSettingsDialog(QDialog):
         drizzle_layout.addRow(self.drizzle_enabled)
         drizzle_layout.addRow("倍率", self.drizzle_scale)
         drizzle_layout.addRow("Pixfrac", self.drizzle_pixfrac)
-        layout.addRow(drizzle_box)
+        correction_layout.addRow(drizzle_box)
 
         cosmetic = project.settings.processing.cosmetic_correction
         cosmetic_box = QGroupBox("Bad Pixel補正")
@@ -351,27 +368,44 @@ class StackingSettingsDialog(QDialog):
         cosmetic_layout.addRow(self.cosmetic_enabled)
         cosmetic_layout.addRow("Bad Pixel Map", bad_pixel_row)
         cosmetic_layout.addRow("補間方式", self.bad_pixel_method)
-        layout.addRow(cosmetic_box)
+        correction_layout.addRow(cosmetic_box)
 
         artifacts = project.settings.processing.artifact_masks
-        artifact_box = QGroupBox("電線・局所障害物")
+        self._pending_artifact_paths = dict(artifacts.mask_paths)
+        self._pending_artifact_line_width = artifacts.line_width
+        self._pending_artifact_feather = artifacts.feather
+        artifact_box = QGroupBox("電線・電柱・局所障害物")
         artifact_layout = QFormLayout(artifact_box)
         self.artifact_masks_enabled = QCheckBox(
-            f"登録済みマスクを使用（{len(artifacts.mask_paths)}フレーム）"
+            f"スタック時に登録済みマスクを使用（{len(artifacts.mask_paths)}フレーム）"
         )
         self.artifact_masks_enabled.setChecked(artifacts.enabled)
         artifact_note = QLabel(
-            "マスクはメイン画面の「追加処理 → 電線・障害物マスク」でフレームごとに作成します。"
+            "対象Lightを選び、電線や電柱の中心線を幅付きで指定します。"
+            "マスク部分はそのフレームのスタック寄与から除外されます。"
         )
         artifact_note.setWordWrap(True)
+        self.artifact_frame = QComboBox()
+        for frame in project.light_frames:
+            if frame.info.enabled:
+                self.artifact_frame.addItem(frame.info.path.name, frame)
+        artifact_buttons = QHBoxLayout()
+        create_artifact = QPushButton("マスクを作成・置換...")
+        create_artifact.clicked.connect(self._create_artifact_mask)
+        remove_artifact = QPushButton("選択フレームの登録解除")
+        remove_artifact.clicked.connect(self._remove_artifact_mask)
+        artifact_buttons.addWidget(create_artifact)
+        artifact_buttons.addWidget(remove_artifact)
         artifact_layout.addRow(self.artifact_masks_enabled)
         artifact_layout.addRow(artifact_note)
-        layout.addRow(artifact_box)
+        artifact_layout.addRow("対象Light", self.artifact_frame)
+        artifact_layout.addRow(artifact_buttons)
+        correction_layout.addRow(artifact_box)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        root_layout.addWidget(buttons)
 
     def _browse_bad_pixel_map(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -383,6 +417,60 @@ class StackingSettingsDialog(QDialog):
         if path:
             remember_dialog_path(self.settings, path)
             self.bad_pixel_path.setText(path)
+
+    def _refresh_artifact_count(self) -> None:
+        self.artifact_masks_enabled.setText(
+            f"スタック時に登録済みマスクを使用（{len(self._pending_artifact_paths)}フレーム）"
+        )
+
+    def _create_artifact_mask(self) -> None:
+        frame = self.artifact_frame.currentData()
+        if frame is None:
+            QMessageBox.information(self, "電線・電柱除去", "有効なLightフレームがありません。")
+            return
+        try:
+            image = self.manager.get_image(frame)
+        except Exception as exc:
+            QMessageBox.warning(self, "マスク作成", f"画像を読み込めませんでした: {exc}")
+            return
+        editor = WireMaskEditorDialog(
+            image,
+            line_width=self._pending_artifact_line_width,
+            feather=self._pending_artifact_feather,
+            parent=self,
+        )
+        if editor.exec() != WireMaskEditorDialog.DialogCode.Accepted:
+            return
+        save_dialog = SaveDialog(frame.info.path.parent, self)
+        save_dialog.setWindowTitle("電線・電柱・障害物Weight Maskを保存")
+        save_dialog.path.setText(
+            str(frame.info.path.with_name(frame.info.path.stem + "_artifact_mask.fits"))
+        )
+        if save_dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        path, options = save_dialog.selected()
+        try:
+            save_image(editor.mask(), path, metadata=frame.info.exif, **options)
+        except Exception as exc:
+            QMessageBox.warning(self, "マスク保存", f"マスクを保存できませんでした: {exc}")
+            return
+        targets = (
+            [candidate for candidate in self.project.light_frames if candidate.info.enabled]
+            if editor.apply_to_all.isChecked()
+            else [frame]
+        )
+        for target in targets:
+            self._pending_artifact_paths[target.info.path] = path
+        self._pending_artifact_line_width = editor.width.value()
+        self._pending_artifact_feather = editor.feather.value()
+        self.artifact_masks_enabled.setChecked(True)
+        self._refresh_artifact_count()
+
+    def _remove_artifact_mask(self) -> None:
+        frame = self.artifact_frame.currentData()
+        if frame is not None:
+            self._pending_artifact_paths.pop(frame.info.path, None)
+            self._refresh_artifact_count()
 
     def accept(self) -> None:
         if self.drizzle_enabled.isChecked():
@@ -405,9 +493,9 @@ class StackingSettingsDialog(QDialog):
             QMessageBox.warning(self, "Bad Pixel補正", "指定したBad Pixel Mapが見つかりません。")
             return
         artifacts = self.project.settings.processing.artifact_masks
-        if self.artifact_masks_enabled.isChecked() and not artifacts.mask_paths:
+        if self.artifact_masks_enabled.isChecked() and not self._pending_artifact_paths:
             QMessageBox.warning(
-                self, "電線・障害物除去", "先にフレームごとの障害物マスクを作成してください。"
+                self, "電線・電柱・障害物除去", "先にフレームごとの障害物マスクを作成してください。"
             )
             return
         if self.moving_basis_btn.isChecked():
@@ -447,6 +535,9 @@ class StackingSettingsDialog(QDialog):
         cosmetic.enabled = self.cosmetic_enabled.isChecked()
         cosmetic.bad_pixel_map_path = Path(bad_pixel_path) if bad_pixel_path else None
         cosmetic.method = self.bad_pixel_method.currentData()
+        artifacts.mask_paths = self._pending_artifact_paths
+        artifacts.line_width = self._pending_artifact_line_width
+        artifacts.feather = self._pending_artifact_feather
         artifacts.enabled = self.artifact_masks_enabled.isChecked()
         self.settings.setValue("stacking/method", self.project.settings.light_frame.method)
         self.settings.setValue("stacking/sigma", self.sigma.value())
