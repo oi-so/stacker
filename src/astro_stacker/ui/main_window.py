@@ -25,12 +25,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..alignment.transform import ImageTransformer
+from ..alignment.transform import AlignedFrameProvider, ImageTransformer
 from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
+from ..calibration.bad_pixels import detect_bad_pixels
+from ..export.aligned import export_aligned_frames
+from ..ground.mask import estimate_ground_mask
 from ..io.image_manager import ImageManager
 from ..io.saver import save_image
+from ..masks.stars import generate_star_mask
 from ..moving_object.marker import moving_object_preview_pixel
 from ..pipeline.alignment_pipeline import AlignmentPipeline
+from ..pipeline.extended_pipeline import HDRPipeline, TimelapseStackPipeline
 from ..pipeline.processing_pipeline import ProcessingPipeline
 from ..platesolve import AstrometryNetSolver, PlateSolveSettings
 from .constants import FrameType
@@ -38,8 +43,10 @@ from .controllers.project_controller import ProjectController
 from .dialogs import (
     AlignmentSettingsDialog,
     ErrorDialog,
+    HDRSettingsDialog,
     SaveDialog,
     StackingSettingsDialog,
+    TimelapseSettingsDialog,
     show_language_restart,
 )
 from .panels.frame_table import FrameTable
@@ -279,6 +286,29 @@ class MainWindow(QMainWindow):
             action = QAction(f"{frame_type.ja_name}を追加", self)
             action.triggered.connect(lambda checked=False, ft=frame_type: self._on_add_frames(ft))
             file_menu.addAction(action)
+
+        process_menu = self.menuBar().addMenu("処理")
+        aligned_export = QAction("位置合わせ済み画像を書き出す...", self)
+        aligned_export.triggered.connect(self._export_aligned_frames)
+        star_mask = QAction("星マスクを作成...", self)
+        star_mask.triggered.connect(self._create_star_mask)
+        hdr = QAction("HDR...", self)
+        hdr.triggered.connect(self._run_hdr)
+        timelapse = QAction("タイムラプス用スタック...", self)
+        timelapse.triggered.connect(self._run_timelapse_stack)
+        ground_mask = QAction("地上領域を自動推定...", self)
+        ground_mask.triggered.connect(self._create_ground_mask)
+        bad_pixels = QAction("Bad Pixel Mapを作成...", self)
+        bad_pixels.triggered.connect(self._create_bad_pixel_map)
+        process_menu.addAction(aligned_export)
+        process_menu.addAction(star_mask)
+        process_menu.addAction(hdr)
+        process_menu.addAction(timelapse)
+        process_menu.addAction(ground_mask)
+        process_menu.addAction(bad_pixels)
+        process_menu.addSeparator()
+        process_menu.addAction(self.align_action)
+        process_menu.addAction(self.stack_action)
 
         settings_menu = self.menuBar().addMenu("設定")
         language_menu = settings_menu.addMenu("言語 / Language")
@@ -600,6 +630,190 @@ class MainWindow(QMainWindow):
             ProcessingPipeline(self.manager).run(self.controller.project, progress=progress, is_cancelled=is_cancelled)
 
         self._run_worker(work, on_success=self._stacking_finished)
+
+    def _export_aligned_frames(self):
+        frames = [
+            frame for frame in self.controller.project.light_frames
+            if frame.info.enabled and frame.info.is_aligned
+        ]
+        if not frames:
+            QMessageBox.information(self, "位置合わせ画像", "位置合わせ済み画像がありません。")
+            return
+        default_folder = frames[0].info.path.parent / "aligned"
+        dialog = SaveDialog(default_folder, self)
+        dialog.setWindowTitle("位置合わせ画像の保存形式")
+        dialog.path.setText(str(default_folder / "aligned.fits"))
+        if dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        sample_path, options = dialog.selected()
+        provider = AlignedFrameProvider(ImageManagerProvider(self.manager), ImageTransformer())
+
+        def work(progress, is_cancelled):
+            export_aligned_frames(
+                frames,
+                provider,
+                sample_path.parent,
+                suffix=sample_path.suffix,
+                bit_depth=options["bit_depth"],
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+
+        self._run_worker(work, on_success=lambda: logger.info("位置合わせ画像を書き出しました"))
+
+    def _create_star_mask(self):
+        frame = self._selected_frame
+        if frame is None or frame.info.stars.all_stars is None:
+            QMessageBox.information(
+                self, "星マスク", "星検出済みのフレームを選択してください。"
+            )
+            return
+        dialog = SaveDialog(frame.info.path.parent, self)
+        dialog.setWindowTitle("星マスクを保存")
+        dialog.path.setText(str(frame.info.path.with_name(frame.info.path.stem + "_star_mask.fits")))
+        if dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        path, options = dialog.selected()
+        shape = (frame.info.shape.height, frame.info.shape.width)
+        mask = generate_star_mask(
+            shape,
+            frame.info.stars.all_stars,
+            self.controller.project.settings.processing.star_mask,
+        )
+        save_image(mask, path, metadata=frame.info.exif, **options)
+        logger.info("星マスクを保存しました: %s", path)
+
+    def _run_hdr(self):
+        project = self.controller.project
+        frames = [frame for frame in project.light_frames if frame.info.enabled]
+        if not frames:
+            QMessageBox.information(self, "HDR", "ライトフレームを追加してください。")
+            return
+        if not all(frame.info.is_aligned for frame in frames):
+            QMessageBox.information(
+                self, "HDR", "HDR素材間の座標を揃えるため、先に全画像を位置合わせしてください。"
+            )
+            return
+        if len(project.get_alignment_sessions()) != 1:
+            QMessageBox.warning(self, "HDR", "全画像を同じ参照画像へ位置合わせしてください。")
+            return
+        dialog = HDRSettingsDialog(project, frames[0].info.path.parent, self)
+        if dialog.exec() != HDRSettingsDialog.DialogCode.Accepted:
+            return
+        output, suffix = dialog.selected()
+        provider = AlignedFrameProvider(ImageManagerProvider(self.manager), ImageTransformer())
+        holder = {}
+
+        def work(progress, is_cancelled):
+            holder["result"] = HDRPipeline(provider).run(
+                frames,
+                project.settings.light_frame,
+                project.settings.processing.hdr,
+                output_directory=output,
+                suffix=suffix,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+
+        def succeeded():
+            products = holder["result"].products
+            for name in ("hdr_tonemapped", "hdr_linear"):
+                if name in products:
+                    project.result.stacked_image = products[name]
+                    self._stacking_finished()
+                    break
+
+        self._run_worker(work, on_success=succeeded)
+
+    def _run_timelapse_stack(self):
+        project = self.controller.project
+        frames = [frame for frame in project.light_frames if frame.info.enabled]
+        if not frames:
+            QMessageBox.information(
+                self, "タイムラプス", "ライトフレームを追加してください。"
+            )
+            return
+        dialog = TimelapseSettingsDialog(project, frames[0].info.path.parent, self)
+        if dialog.exec() != TimelapseSettingsDialog.DialogCode.Accepted:
+            return
+        output, suffix = dialog.selected()
+        settings = project.settings.processing.timelapse
+        provider = ImageManagerProvider(self.manager)
+        if settings.alignment.value == "star_global":
+            if not all(frame.info.is_aligned for frame in frames):
+                QMessageBox.information(
+                    self, "タイムラプス", "共通星座標モードでは先に全画像を位置合わせしてください。"
+                )
+                return
+            provider = AlignedFrameProvider(provider, ImageTransformer())
+
+        def work(progress, is_cancelled):
+            TimelapseStackPipeline(provider).run(
+                frames,
+                project.settings.light_frame,
+                settings,
+                output,
+                suffix=suffix,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+
+        self._run_worker(work, on_success=lambda: logger.info("タイムラプス素材を出力しました"))
+
+    def _create_ground_mask(self):
+        frame = self._selected_frame
+        if frame is None:
+            QMessageBox.information(self, "地上領域推定", "フレームを選択してください。")
+            return
+        dialog = SaveDialog(frame.info.path.parent, self)
+        dialog.setWindowTitle("推定した地上マスクを保存")
+        dialog.path.setText(str(frame.info.path.with_name(frame.info.path.stem + "_ground_mask.fits")))
+        if dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        path, options = dialog.selected()
+        holder = {}
+
+        def work(progress, is_cancelled):
+            if is_cancelled():
+                return
+            progress("地上領域を推定中", 0, 1, frame.info.path.name)
+            holder["estimate"] = estimate_ground_mask(self.manager.get_image(frame))
+            save_image(
+                holder["estimate"].sky_weight,
+                path,
+                metadata=frame.info.exif,
+                **options,
+            )
+
+        def succeeded():
+            estimate = holder.get("estimate")
+            if estimate and estimate.warning:
+                QMessageBox.warning(self, "地上領域推定", estimate.warning)
+
+        self._run_worker(work, on_success=succeeded)
+
+    def _create_bad_pixel_map(self):
+        frame = self._selected_frame
+        if frame is None:
+            QMessageBox.information(
+                self, "Bad Pixel Map", "DarkまたはBiasフレームを選択してください。"
+            )
+            return
+        dialog = SaveDialog(frame.info.path.parent, self)
+        dialog.setWindowTitle("Bad Pixel Mapを保存")
+        dialog.path.setText(str(frame.info.path.with_name(frame.info.path.stem + "_bpm.fits")))
+        if dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        path, options = dialog.selected()
+
+        def work(progress, is_cancelled):
+            if is_cancelled():
+                return
+            progress("Bad Pixelを検出中", 0, 1, frame.info.path.name)
+            bpm = detect_bad_pixels(self.manager.get_image(frame))
+            save_image(bpm, path, metadata=frame.info.exif, frame_type="bad_pixel_map", **options)
+
+        self._run_worker(work, on_success=lambda: logger.info("Bad Pixel Mapを保存しました: %s", path))
 
     @Slot(object)
     def _on_worker_failed_trigger(self, exc):

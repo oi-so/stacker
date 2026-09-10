@@ -9,13 +9,33 @@ from ..io.image_data import AstroImage, ColorMode, TransformData
 
 class ImageTransformer:
     @staticmethod
-    def _warp(image: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+    def _warp(
+        image: np.ndarray,
+        matrix: np.ndarray,
+        *,
+        interpolation: int = cv2.INTER_LINEAR,
+    ) -> np.ndarray:
         height, width = image.shape[:2]
-        return cv2.warpAffine(
-            np.asarray(image, dtype=np.float32),
-            np.asarray(matrix[:2], dtype=np.float64), (width, height),
-            flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+        matrix = np.asarray(matrix, dtype=np.float64)
+        source = np.asarray(image, dtype=np.float32)
+        if matrix.shape != (3, 3):
+            raise ValueError("Transform matrix must be 3x3")
+        if not np.isfinite(matrix).all() or abs(np.linalg.det(matrix)) < 1e-12:
+            raise ValueError("Transform matrix must be finite and invertible")
+        if np.allclose(matrix[2], (0.0, 0.0, 1.0)):
+            return cv2.warpAffine(
+                source, matrix[:2], (width, height), flags=interpolation,
+                borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+            )
+        return cv2.warpPerspective(
+            source, matrix, (width, height), flags=interpolation,
+            borderMode=cv2.BORDER_CONSTANT, borderValue=0,
         )
+
+    def apply_mask(self, mask: np.ndarray, matrix: np.ndarray) -> np.ndarray:
+        """Transform a float weight mask in exactly the image coordinate grid."""
+        result = self._warp(np.asarray(mask, dtype=np.float32), matrix)
+        return np.clip(result, 0.0, 1.0, out=result)
 
     def _transform_rgb(self, image: np.ndarray, transform: TransformData) -> np.ndarray:
         return self._warp(image, transform.matrix)
@@ -30,11 +50,10 @@ class ImageTransformer:
             for x in range(2):
                 # A Bayer plane lives at full-image coordinates 2*p + offset.
                 # Conjugate the transform to preserve its colour and origin.
-                matrix = np.array(transform.matrix, dtype=np.float64, copy=True)
-                offset = np.array([x, y], dtype=np.float64)
-                matrix[:2, 2] = (
-                    matrix[:2, 2] + matrix[:2, :2] @ offset - offset
-                ) / 2.0
+                to_full = np.array(
+                    [[2.0, 0.0, x], [0.0, 2.0, y], [0.0, 0.0, 1.0]]
+                )
+                matrix = np.linalg.inv(to_full) @ transform.matrix @ to_full
                 plane = mono[y::2, x::2]
                 if plane.size:
                     transformed[y::2, x::2] = self._warp(plane, matrix)

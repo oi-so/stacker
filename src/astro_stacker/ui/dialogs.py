@@ -26,7 +26,14 @@ from PySide6.QtWidgets import (
 
 from ..io.image_manager import ImageManager
 from ..project.project import Project
-from ..project.settings import AlignmentMode, ReferenceMode, StackingMethod
+from ..project.settings import (
+    AlignmentMode,
+    AlignmentStrategy,
+    FrameSelectionMode,
+    HDRStopAfter,
+    ReferenceMode,
+    StackingMethod,
+)
 from .moving_object_dialog import MovingObjectSettingsDialog
 
 
@@ -246,6 +253,50 @@ class StackingSettingsDialog(QDialog):
 
         layout.addRow(self.sigma_group)
 
+        weighting = QGroupBox("正規化・品質")
+        weighting_layout = QFormLayout(weighting)
+        self.use_masks = QCheckBox("位置合わせ後の無効領域を除外")
+        self.use_masks.setChecked(project.settings.light_frame.use_weight_masks)
+        self.use_quality_weights = QCheckBox("品質重みを使用（完全除外とは別）")
+        self.use_quality_weights.setChecked(project.settings.light_frame.use_quality_weights)
+        self.exposure_normalization = QCheckBox("露出時間で正規化（線形画像向け）")
+        self.exposure_normalization.setChecked(
+            project.settings.light_frame.exposure_normalization
+        )
+        self.background_normalization = QComboBox()
+        self.background_normalization.addItem("なし", "none")
+        self.background_normalization.addItem("Median", "median")
+        self.background_normalization.addItem("Robust", "robust")
+        background = project.settings.light_frame.background_normalization
+        self.background_normalization.setCurrentIndex(
+            max(0, self.background_normalization.findData(background))
+        )
+        weighting_layout.addRow(self.use_masks)
+        weighting_layout.addRow(self.use_quality_weights)
+        weighting_layout.addRow(self.exposure_normalization)
+        weighting_layout.addRow("背景正規化", self.background_normalization)
+        layout.addRow(weighting)
+
+        selection = QGroupBox("フレーム選別")
+        selection_layout = QFormLayout(selection)
+        self.selection_mode = QComboBox()
+        for label, mode in (
+            ("全画像", FrameSelectionMode.ALL),
+            ("上位 %", FrameSelectionMode.TOP_PERCENT),
+            ("上位 n 枚", FrameSelectionMode.TOP_COUNT),
+            ("Score閾値以上", FrameSelectionMode.SCORE_THRESHOLD),
+            ("手動", FrameSelectionMode.MANUAL),
+        ):
+            self.selection_mode.addItem(label, mode)
+        current_selection = project.settings.processing.frame_selection
+        self.selection_mode.setCurrentIndex(self.selection_mode.findData(current_selection.mode))
+        self.selection_value = QDoubleSpinBox()
+        self.selection_value.setRange(0, 100000)
+        self.selection_value.setValue(current_selection.value)
+        selection_layout.addRow("方式", self.selection_mode)
+        selection_layout.addRow("値", self.selection_value)
+        layout.addRow(selection)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -271,6 +322,16 @@ class StackingSettingsDialog(QDialog):
         self.project.settings.light_frame.method = methods[self.method.currentIndex()]
         self.project.settings.light_frame.sigma = self.sigma.value()
         self.project.settings.light_frame.iterations = self.iterations.value()
+        self.project.settings.light_frame.use_weight_masks = self.use_masks.isChecked()
+        self.project.settings.light_frame.use_quality_weights = self.use_quality_weights.isChecked()
+        self.project.settings.light_frame.exposure_normalization = (
+            self.exposure_normalization.isChecked()
+        )
+        self.project.settings.light_frame.background_normalization = (
+            self.background_normalization.currentData()
+        )
+        self.project.settings.processing.frame_selection.mode = self.selection_mode.currentData()
+        self.project.settings.processing.frame_selection.value = self.selection_value.value()
         self.settings.setValue("stacking/method", self.project.settings.light_frame.method)
         self.settings.setValue("stacking/sigma", self.sigma.value())
         self.settings.setValue("stacking/iterations", self.iterations.value())
@@ -354,6 +415,145 @@ class SaveDialog(QDialog):
             "quality": self.quality.value(),
             "comment": self.comment.toPlainText(),
         }
+
+
+class HDRSettingsDialog(QDialog):
+    def __init__(self, project: Project, default_folder: Path, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("HDR")
+        layout = QFormLayout(self)
+        self.auto_group = QCheckBox("EXIF撮影条件で自動グループ化")
+        self.auto_group.setChecked(project.settings.processing.hdr.auto_group)
+        frames = [frame for frame in project.light_frames if frame.info.enabled]
+        self.manual_groups = QLineEdit(
+            ",".join(
+                project.settings.processing.hdr.manual_groups.get(
+                    str(frame.info.path), str(index + 1)
+                )
+                for index, frame in enumerate(frames)
+            )
+        )
+        self.manual_groups.setPlaceholderText("フレーム順のグループID（例: 1,1,2,2）")
+        self.manual_groups.setEnabled(not self.auto_group.isChecked())
+        self.auto_group.toggled.connect(
+            lambda checked: self.manual_groups.setEnabled(not checked)
+        )
+        self.stop_after = QComboBox()
+        self.stop_after.addItem("露出別Stackを保存して終了", HDRStopAfter.EXPOSURE_STACKS)
+        self.stop_after.addItem("HDR Mergeまで", HDRStopAfter.MERGE)
+        self.stop_after.addItem("Tone Mappingまで", HDRStopAfter.TONE_MAP)
+        self.stop_after.setCurrentIndex(
+            self.stop_after.findData(project.settings.processing.hdr.stop_after)
+        )
+        self.format = QComboBox()
+        for label, suffix in (("FITS", ".fits"), ("TIFF", ".tiff"), ("PNG", ".png"), ("JPEG", ".jpg")):
+            self.format.addItem(label, suffix)
+        self.output = QLineEdit(str(default_folder / "hdr"))
+        browse = QPushButton("参照")
+        browse.clicked.connect(self._browse)
+        row = QHBoxLayout()
+        row.addWidget(self.output)
+        row.addWidget(browse)
+        layout.addRow(self.auto_group)
+        layout.addRow("手動グループ", self.manual_groups)
+        layout.addRow("実行範囲", self.stop_after)
+        layout.addRow("保存形式", self.format)
+        layout.addRow("出力フォルダ", row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse(self):
+        folder = QFileDialog.getExistingDirectory(self, "HDR出力フォルダ", self.output.text())
+        if folder:
+            self.output.setText(folder)
+
+    def accept(self):
+        settings = self.project.settings.processing.hdr
+        settings.auto_group = self.auto_group.isChecked()
+        if not settings.auto_group:
+            frames = [frame for frame in self.project.light_frames if frame.info.enabled]
+            labels = [value.strip() for value in self.manual_groups.text().split(",")]
+            if len(labels) != len(frames) or any(not value for value in labels):
+                QMessageBox.warning(
+                    self,
+                    "HDR手動グループ",
+                    f"有効フレーム{len(frames)}枚分のグループIDをカンマ区切りで指定してください。",
+                )
+                return
+            settings.manual_groups = {
+                str(frame.info.path): label
+                for frame, label in zip(frames, labels, strict=True)
+            }
+        settings.stop_after = self.stop_after.currentData()
+        super().accept()
+
+    def selected(self):
+        return Path(self.output.text()), self.format.currentData()
+
+
+class TimelapseSettingsDialog(QDialog):
+    def __init__(self, project: Project, default_folder: Path, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("タイムラプス用n枚スタック")
+        layout = QFormLayout(self)
+        settings = project.settings.processing.timelapse
+        self.window = QSpinBox()
+        self.window.setRange(1, 10000)
+        self.window.setValue(settings.window_size)
+        self.step = QSpinBox()
+        self.step.setRange(1, 10000)
+        self.step.setValue(settings.step)
+        self.partial = QCheckBox("最後の端数グループも出力")
+        self.partial.setChecked(settings.include_partial)
+        self.alignment = QComboBox()
+        self.alignment.addItem("位置合わせなし", AlignmentStrategy.NONE)
+        self.alignment.addItem("全画像を共通星座標へ位置合わせ", AlignmentStrategy.STAR_GLOBAL)
+        self.alignment.setCurrentIndex(max(0, self.alignment.findData(settings.alignment)))
+        self.format = QComboBox()
+        for label, suffix in (("FITS", ".fits"), ("TIFF", ".tiff"), ("PNG", ".png"), ("JPEG", ".jpg")):
+            self.format.addItem(label, suffix)
+        self.output = QLineEdit(str(default_folder / "timelapse"))
+        browse = QPushButton("参照")
+        browse.clicked.connect(self._browse)
+        row = QHBoxLayout()
+        row.addWidget(self.output)
+        row.addWidget(browse)
+        layout.addRow("Window size", self.window)
+        layout.addRow("Step", self.step)
+        layout.addRow(self.partial)
+        layout.addRow("Alignment", self.alignment)
+        layout.addRow("保存形式", self.format)
+        layout.addRow("出力フォルダ", row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "タイムラプス出力フォルダ", self.output.text()
+        )
+        if folder:
+            self.output.setText(folder)
+
+    def accept(self):
+        settings = self.project.settings.processing.timelapse
+        settings.window_size = self.window.value()
+        settings.step = self.step.value()
+        settings.include_partial = self.partial.isChecked()
+        settings.alignment = self.alignment.currentData()
+        super().accept()
+
+    def selected(self):
+        return Path(self.output.text()), self.format.currentData()
 
 
 class ErrorDialog(QMessageBox):

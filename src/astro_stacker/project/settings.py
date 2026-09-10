@@ -1,6 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-
 
 
 class StackingMethod(StrEnum):
@@ -30,6 +29,93 @@ class StackingSettings:
     method: StackingMethod = StackingMethod.AVERAGE
     sigma: float = 3.0
     iterations: int = 1
+    use_weight_masks: bool = False
+    use_quality_weights: bool = False
+    exposure_normalization: bool = False
+    background_normalization: str = "none"
+
+
+class InvalidPixelPolicy(StrEnum):
+    ZERO = "zero"
+    NAN = "nan"
+    KEEP_MASK = "keep_mask"
+
+
+class FrameSelectionMode(StrEnum):
+    ALL = "all"
+    TOP_PERCENT = "top_percent"
+    TOP_COUNT = "top_count"
+    SCORE_THRESHOLD = "score_threshold"
+    MANUAL = "manual"
+
+
+@dataclass
+class FrameSelectionSettings:
+    mode: FrameSelectionMode = FrameSelectionMode.ALL
+    value: float = 100.0
+
+
+@dataclass
+class StarMaskSettings:
+    minimum_flux: float = 0.0
+    radius_scale: float = 1.5
+    expansion: float = 0.0
+    feather: float = 1.0
+    bright_star_scale: float = 0.25
+    include_halos: bool = True
+    elliptical: bool = True
+    inverted: bool = False
+
+
+class HDRStopAfter(StrEnum):
+    EXPOSURE_STACKS = "exposure_stacks"
+    MERGE = "merge"
+    TONE_MAP = "tone_map"
+
+
+@dataclass
+class HDRSettings:
+    auto_group: bool = True
+    manual_groups: dict[str, str] = field(default_factory=dict)
+    group_tolerance: float = 0.01
+    stop_after: HDRStopAfter = HDRStopAfter.MERGE
+    saturation_mode: str = "auto"
+    black_level: float | None = None
+    white_level: float | None = None
+    tone_mapping: str = "global"
+
+
+class AlignmentStrategy(StrEnum):
+    STAR_PER_GROUP = "star_per_group"
+    STAR_GLOBAL = "star_global"
+    NONE = "none"
+    GROUND = "ground"
+    AUTO = "auto"
+
+
+@dataclass
+class TimelapseSettings:
+    window_size: int = 10
+    step: int = 10
+    include_partial: bool = True
+    alignment: AlignmentStrategy = AlignmentStrategy.NONE
+
+
+@dataclass
+class ExportSettings:
+    suffix: str = ".fits"
+    bit_depth: int | str | None = None
+    invalid_pixels: InvalidPixelPolicy = InvalidPixelPolicy.ZERO
+    save_validity_mask: bool = False
+    continue_to_stack: bool = False
+
+
+@dataclass
+class ProcessingOptions:
+    frame_selection: FrameSelectionSettings = field(default_factory=FrameSelectionSettings)
+    star_mask: StarMaskSettings = field(default_factory=StarMaskSettings)
+    hdr: HDRSettings = field(default_factory=HDRSettings)
+    timelapse: TimelapseSettings = field(default_factory=TimelapseSettings)
 
 
 class AlignmentMode(StrEnum):

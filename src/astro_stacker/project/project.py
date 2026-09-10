@@ -12,6 +12,7 @@ from ..project.settings import (
     AlignmentSettings,
     CalibrationSettings,
     DebayerTiming,
+    ProcessingOptions,
     StackingSettings,
 )
 
@@ -29,6 +30,7 @@ class ProjectSettings:
     flat_frame: StackingSettings = field(default_factory=StackingSettings)
     flat_dark_frame: StackingSettings = field(default_factory=StackingSettings)
     bias_frame: StackingSettings = field(default_factory=StackingSettings)
+    processing: ProcessingOptions = field(default_factory=ProcessingOptions)
 
 
 @dataclass
@@ -40,6 +42,7 @@ class AppSettings:
 @dataclass
 class ProjectResult:
     stacked_image: np.ndarray | None = None
+    validity_mask: np.ndarray | None = None
     metadata: dict = field(default_factory=dict)
 
 

@@ -1,7 +1,10 @@
 from ..alignment.transform import AlignedFrameProvider, ImageTransformer
+from ..analysis.quality import quality_weights, select_frames
 from ..core.frame_provider import FrameProvider
+from ..masks.weights import AlignmentValidityMaskProvider
 from ..moving_object.provider import MovingObjectAlignedFrameProvider
 from ..moving_object.transform import MovingObjectTransformBuilder
+from ..normalization.frame import NormalizedFrameProvider, background_level
 from ..project.project import Project
 from ..project.settings import StackingSettings
 from ..stacking.combiner import ImageCombiner
@@ -56,6 +59,44 @@ class StackingPipeline:
         if not frames:
             raise ValueError("No light frames available for stacking")
 
+        frames, rejection_reasons = select_frames(
+            frames, project.settings.processing.frame_selection
+        )
+        project.view_state["frame_rejection_reasons"] = {
+            str(path): reason for path, reason in rejection_reasons.items()
+        }
+        if not frames:
+            raise ValueError("Frame selection excluded all light frames")
+
+        target_background = None
+        if settings.background_normalization != "none":
+            reference_data = provider.get_image(frames[0])
+            if settings.exposure_normalization:
+                exposure = frames[0].info.exposure_time
+                if exposure is None or exposure <= 0:
+                    raise ValueError("Exposure normalization requires positive exposure metadata")
+                reference_data = reference_data / exposure
+            target_background = background_level(
+                reference_data, settings.background_normalization
+            )
+        if settings.exposure_normalization or settings.background_normalization != "none":
+            provider = NormalizedFrameProvider(
+                provider,
+                exposure=settings.exposure_normalization,
+                background_method=settings.background_normalization,
+                target_background=target_background,
+            )
+
+        masks = (
+            AlignmentValidityMaskProvider()
+            if (
+                settings.use_weight_masks
+                and project.settings.use_alignment
+                and not moving_object.enabled
+            )
+            else None
+        )
+        weights = quality_weights(frames) if settings.use_quality_weights else None
 
         with timer("StackWorkers", True):
             combiner = ImageCombiner(provider)
@@ -66,12 +107,16 @@ class StackingPipeline:
                 settings,
                 progress=progress,
                 is_cancelled=is_cancelled,
-                combine_msg="スタック後画像"
+                combine_msg="スタック後画像",
+                mask_provider=masks,
+                frame_weights=weights,
             )
 
             project.result.stacked_image = result
             from ..metadata.stacked import stack_metadata
             project.result.metadata = stack_metadata(frames, settings.method) if result is not None else {}
+            if result is not None:
+                project.result.validity_mask = combiner.last_valid_mask
             # Reuse the reference WCS only when output pixels use that grid.
             reference = project.reference_image
             if result is not None and project.settings.use_alignment and not moving_object.enabled and reference:
