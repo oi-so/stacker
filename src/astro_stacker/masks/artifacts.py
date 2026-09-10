@@ -11,6 +11,15 @@ Point = tuple[float, float]
 Polyline = list[Point]
 
 
+def _blocked_to_weight(blocked: np.ndarray, feather: float) -> np.ndarray:
+    if not np.any(blocked):
+        return np.ones(blocked.shape, dtype=np.float32)
+    if feather == 0:
+        return (blocked == 0).astype(np.float32)
+    distance = cv2.distanceTransform((blocked == 0).astype(np.uint8), cv2.DIST_L2, 5)
+    return np.clip(distance / float(feather), 0.0, 1.0).astype(np.float32)
+
+
 def polyline_weight_mask(
     shape: tuple[int, int],
     polylines: Iterable[Polyline],
@@ -37,13 +46,30 @@ def polyline_weight_mask(
         integer_points = np.rint(points).astype(np.int32).reshape((-1, 1, 2))
         cv2.polylines(blocked, [integer_points], False, 1, thickness, cv2.LINE_AA)
 
-    if not np.any(blocked):
-        return np.ones(shape, dtype=np.float32)
-    if feather == 0:
-        return (blocked == 0).astype(np.float32)
+    return _blocked_to_weight(blocked, feather)
 
-    distance = cv2.distanceTransform((blocked == 0).astype(np.uint8), cv2.DIST_L2, 5)
-    return np.clip(distance / float(feather), 0.0, 1.0).astype(np.float32)
+
+def polygon_weight_mask(
+    shape: tuple[int, int],
+    polygons: Iterable[Polyline],
+    *,
+    feather: float = 3.0,
+) -> np.ndarray:
+    """Return a weight mask with arbitrary polygonal obstructions removed."""
+    if len(shape) != 2 or min(shape) <= 0:
+        raise ValueError("Mask shape must contain positive height and width")
+    if not np.isfinite(feather) or feather < 0:
+        raise ValueError("Feather must be non-negative")
+    blocked = np.zeros(shape, dtype=np.uint8)
+    for polygon in polygons:
+        points = np.asarray(list(polygon), dtype=np.float64)
+        if len(points) < 3:
+            continue
+        if points.ndim != 2 or points.shape[1] != 2 or not np.isfinite(points).all():
+            raise ValueError("Polygon points must be finite x/y pairs")
+        integer_points = np.rint(points).astype(np.int32).reshape((-1, 1, 2))
+        cv2.fillPoly(blocked, [integer_points], 1, cv2.LINE_AA)
+    return _blocked_to_weight(blocked, feather)
 
 
 def detect_line_candidates(
@@ -81,7 +107,8 @@ def detect_line_candidates(
     if lines is None:
         return []
     candidates = []
-    for x1, y1, x2, y2 in lines[:, 0]:
+    # OpenCV builds return either (N, 1, 4) or (N, 4).
+    for x1, y1, x2, y2 in np.asarray(lines).reshape(-1, 4):
         candidates.append([(float(x1), float(y1)), (float(x2), float(y2))])
         if len(candidates) >= maximum_candidates:
             break

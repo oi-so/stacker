@@ -14,7 +14,7 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 from ..alignment.transform import ImageTransformer
-from ..io.image_data import AstroImage
+from ..io.image_data import AstroImage, TransformData
 
 
 def _as_mask(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -111,13 +111,23 @@ class CompositeMaskProvider:
 class AlignedMaskProvider:
     """Apply each frame's star/ground alignment to its source-grid mask."""
 
-    def __init__(self, base: WeightMaskProvider, transformer: ImageTransformer | None = None):
+    def __init__(
+        self,
+        base: WeightMaskProvider,
+        transformer: ImageTransformer | None = None,
+        transform_for: Callable[[AstroImage], TransformData] | None = None,
+    ):
         self.base = base
         self.transformer = transformer or ImageTransformer()
+        self.transform_for = transform_for
 
     def get_mask(self, astro_image: AstroImage, shape: tuple[int, int]) -> np.ndarray:
         mask = self.base.get_mask(astro_image, shape)
-        transform = astro_image.info.transform
+        transform = (
+            self.transform_for(astro_image)
+            if self.transform_for is not None
+            else astro_image.info.transform
+        )
         if transform is None or transform.matrix is None:
             return mask
         return self.transformer.apply_mask(mask, transform.matrix)
@@ -126,11 +136,20 @@ class AlignedMaskProvider:
 class AlignmentValidityMaskProvider:
     """Generate the valid transformed footprint without retaining frame masks."""
 
-    def __init__(self, transformer: ImageTransformer | None = None):
+    def __init__(
+        self,
+        transformer: ImageTransformer | None = None,
+        transform_for: Callable[[AstroImage], TransformData] | None = None,
+    ):
         self.transformer = transformer or ImageTransformer()
+        self.transform_for = transform_for
 
     def get_mask(self, astro_image: AstroImage, shape: tuple[int, int]) -> np.ndarray:
-        transform = astro_image.info.transform
+        transform = (
+            self.transform_for(astro_image)
+            if self.transform_for is not None
+            else astro_image.info.transform
+        )
         if transform is None or transform.matrix is None:
             return np.ones(shape, dtype=np.float32)
         return self.transformer.apply_mask(np.ones(shape, dtype=np.float32), transform.matrix)

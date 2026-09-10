@@ -37,10 +37,9 @@ class StackingPipeline:
         provider = self.provider
         moving_object = project.settings.moving_object
         drizzle = project.settings.processing.drizzle
-        if drizzle.enabled and moving_object.enabled:
-            raise ValueError("Drizzleと移動天体基準スタックは同時に使用できません。")
         if drizzle.enabled and not project.settings.use_alignment:
             raise ValueError("Drizzleには恒星基準の位置合わせが必要です。")
+        transform_builder = None
         if moving_object.enabled:
             if not project.settings.use_alignment:
                 raise ValueError("移動天体基準スタックには星基準の位置合わせが必要です。")
@@ -66,11 +65,12 @@ class StackingPipeline:
                 moving_object.anchors,
                 target_reference_frame,
             )
-            provider = MovingObjectAlignedFrameProvider(
-                provider,
-                ImageTransformer(),
-                transform_builder,
-            )
+            if not drizzle.enabled:
+                provider = MovingObjectAlignedFrameProvider(
+                    provider,
+                    ImageTransformer(),
+                    transform_builder,
+                )
         elif project.settings.use_alignment and not drizzle.enabled:
             provider = AlignedFrameProvider(provider, ImageTransformer())
 
@@ -114,15 +114,27 @@ class StackingPipeline:
         if (
                 settings.use_weight_masks
                 and project.settings.use_alignment
-                and not moving_object.enabled
                 and not drizzle.enabled
         ):
-            mask_providers.append(AlignmentValidityMaskProvider())
-        if self.source_mask_provider is not None:
-            if moving_object.enabled:
-                raise ValueError("電線・障害物マスクは恒星基準または位置合わせなしで使用してください。")
             mask_providers.append(
-                AlignedMaskProvider(self.source_mask_provider)
+                AlignmentValidityMaskProvider(
+                    transform_for=(
+                        transform_builder.transform_for
+                        if moving_object.enabled and transform_builder is not None
+                        else None
+                    )
+                )
+            )
+        if self.source_mask_provider is not None:
+            mask_providers.append(
+                AlignedMaskProvider(
+                    self.source_mask_provider,
+                    transform_for=(
+                        transform_builder.transform_for
+                        if moving_object.enabled and transform_builder is not None
+                        else None
+                    ),
+                )
                 if project.settings.use_alignment and not drizzle.enabled
                 else self.source_mask_provider
             )
@@ -142,6 +154,11 @@ class StackingPipeline:
                     is_cancelled=is_cancelled,
                     mask_provider=masks,
                     frame_weights=weights,
+                    transform_for=(
+                        transform_builder.transform_for
+                        if moving_object.enabled and transform_builder is not None
+                        else None
+                    ),
                 )
             else:
                 result = combiner.combine(

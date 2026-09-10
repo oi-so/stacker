@@ -1,7 +1,7 @@
 """Hot/cold pixel and abnormal-column detection with CFA-safe correction."""
 
 import numpy as np
-from scipy.ndimage import median_filter
+from scipy.ndimage import label, median_filter
 
 from ..core.frame_provider import FrameProvider
 from ..io.image_data import AstroImage, CFAType
@@ -36,6 +36,83 @@ def detect_bad_pixels(
         abnormal = np.abs(column_level - np.nanmedian(column_level)) > hot_sigma * column_noise
         bad[:, abnormal] = True
     return bad.astype(np.float32)
+
+
+def detect_bad_pixels_from_lights(
+    provider: FrameProvider,
+    frames: list[AstroImage],
+    *,
+    sigma: float = 10.0,
+    persistence: float = 0.7,
+    progress=None,
+    is_cancelled=None,
+) -> np.ndarray | None:
+    """Detect persistent isolated sensor defects without dark/bias frames.
+
+    This deliberately accepts only mono/Bayer data. Requiring persistence over
+    multiple frames and rejecting connected structures reduces the risk of
+    treating stars or scene detail as sensor defects.
+    """
+    enabled = [frame for frame in frames if frame.info.enabled]
+    if len(enabled) < 3:
+        raise ValueError("LightsからのBad Pixel検出には3枚以上必要です。")
+    if not np.isfinite(sigma) or sigma < 3:
+        raise ValueError("Bad Pixel検出sigmaは3以上にしてください。")
+    if not np.isfinite(persistence) or not 0.3 <= persistence <= 1:
+        raise ValueError("Bad Pixel継続率は0.3〜1.0で指定してください。")
+
+    counts = None
+    shape = None
+    is_bayer = None
+    for index, frame in enumerate(enabled, 1):
+        if is_cancelled and is_cancelled():
+            return None
+        data = np.asarray(provider.get_image(frame), dtype=np.float32)
+        if data.ndim == 3 and data.shape[-1] == 1:
+            data = data[..., 0]
+        if data.ndim != 2 or not np.isfinite(data).all():
+            raise ValueError("Lights自動検出は有限値のMono/RAW Bayer画像だけに対応します。")
+        if shape is None:
+            shape = data.shape
+            counts = np.zeros(shape, dtype=np.uint16)
+            is_bayer = frame.info.cfa_type != CFAType.NONE
+        if data.shape != shape:
+            raise ValueError("Lightsの画像サイズが一致していません。")
+        if (frame.info.cfa_type != CFAType.NONE) != is_bayer:
+            raise ValueError("Mono画像とBayer画像を混在させてBad Pixel検出できません。")
+
+        local = np.empty_like(data)
+        stride = 2 if is_bayer else 1
+        for y in range(stride):
+            for x in range(stride):
+                plane = data[y::stride, x::stride]
+                local[y::stride, x::stride] = median_filter(plane, size=5, mode="reflect")
+        residual = data - local
+        center = float(np.median(residual))
+        noise = max(1e-8, 1.4826 * float(np.median(np.abs(residual - center))))
+        counts += (np.abs(residual - center) > sigma * noise).astype(np.uint16)
+        if progress:
+            progress(
+                "LightsからBad Pixel検出中",
+                index,
+                len(enabled),
+                frame.info.path.name,
+            )
+
+    required = max(2, int(np.ceil(len(enabled) * persistence)))
+    persistent = counts >= required
+    isolated = np.zeros(shape, dtype=bool)
+    stride = 2 if is_bayer else 1
+    for y in range(stride):
+        for x in range(stride):
+            plane = persistent[y::stride, x::stride]
+            components, count = label(plane, structure=np.ones((3, 3), dtype=np.uint8))
+            if count:
+                sizes = np.bincount(components.ravel())
+                keep = (sizes >= 1) & (sizes <= 2)
+                keep[0] = False
+                isolated[y::stride, x::stride] = keep[components]
+    return isolated.astype(np.float32)
 
 
 def correct_bad_pixels(

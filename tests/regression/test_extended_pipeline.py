@@ -6,7 +6,12 @@ from astropy.io import fits
 
 from astro_stacker.alignment.transform import ImageTransformer
 from astro_stacker.analysis import analyze_motion, suggest_time_groups
-from astro_stacker.calibration.bad_pixels import correct_bad_pixels, detect_bad_pixels
+from astro_stacker.calibration.bad_pixels import (
+    correct_bad_pixels,
+    detect_bad_pixels,
+    detect_bad_pixels_from_lights,
+)
+from astro_stacker.core.provider import PreviewProvider, PreviewSettings
 from astro_stacker.drizzle import DrizzleCombiner
 from astro_stacker.grouping import make_windows
 from astro_stacker.hdr import group_by_exposure, merge_hdr, tone_map
@@ -21,7 +26,9 @@ from astro_stacker.io.image_data import (
 from astro_stacker.masks import (
     ArrayMaskProvider,
     compose_masks,
+    detect_line_candidates,
     generate_star_mask,
+    polygon_weight_mask,
     polyline_weight_mask,
 )
 from astro_stacker.nightscape import composite_nightscape, light_pollution_frame
@@ -55,6 +62,19 @@ class Provider:
 
     def get_image(self, image):
         return self.arrays[int(image.info.path.stem)]
+
+
+class CountingPreviewManager:
+    def __init__(self, array):
+        self.array = array
+        self.loads = 0
+
+    def cache_key(self, image):
+        return (str(image.info.path), 1)
+
+    def get_image(self, image):
+        self.loads += 1
+        return self.array
 
 
 def test_weighted_average_mask_and_zero_sum_are_safe():
@@ -101,6 +121,24 @@ def test_parallel_prefetch_preserves_order_and_nan_validity():
     np.testing.assert_allclose(parallel, sequential)
     assert parallel[2, 3] == pytest.approx(3)
     assert parallel_combiner.last_valid_mask[2, 3] == 1
+
+
+def test_preview_is_bounded_and_reused_without_reloading():
+    image = AstroImage(
+        AstroImageInfo(
+            Path("preview.fits"), ImageShape(600, 400, 1), 16, ColorMode.MONO
+        )
+    )
+    manager = CountingPreviewManager(np.ones((400, 600), dtype=np.float32))
+    provider = PreviewProvider(manager, max_cache_bytes=16 * 1024**2)
+    settings = PreviewSettings(binning=1, debayer=False, max_dimension=256)
+
+    first = provider.get_image(image, settings)
+    second = provider.get_image(image, settings)
+
+    assert first.image.shape == (133, 200)
+    assert second.image is first.image
+    assert manager.loads == 1
 
 
 def test_mask_composition_and_affine_transform_match_image_grid():
@@ -183,6 +221,22 @@ def test_bad_pixel_detection_rejects_nonfinite_calibration_data():
         detect_bad_pixels(image)
 
 
+def test_bad_pixel_detection_from_lights_keeps_persistent_isolated_pixels():
+    frames = [frame(index) for index in range(5)]
+    arrays = np.stack(
+        [np.full((12, 12), 10 + index * 0.1, dtype=np.float32) for index in range(5)]
+    )
+    arrays[:, 6, 7] = 1000
+    arrays[:, 2:4, 2:4] = 500  # Extended scene/star-like structure is rejected.
+
+    result = detect_bad_pixels_from_lights(
+        Provider(arrays), frames, sigma=5, persistence=0.6
+    )
+
+    assert result[6, 7] == 1
+    assert not np.any(result[2:4, 2:4])
+
+
 def test_polyline_mask_has_zero_core_feather_and_untouched_background():
     mask = polyline_weight_mask(
         (31, 31),
@@ -194,6 +248,24 @@ def test_polyline_mask_has_zero_core_feather_and_untouched_background():
     assert mask[15, 15] == 0
     assert 0 < mask[19, 15] < 1
     assert mask[0, 0] == 1
+
+
+def test_polygon_mask_removes_area_without_connecting_separate_lines():
+    mask = polygon_weight_mask(
+        (30, 30), [[(5, 5), (20, 5), (20, 20), (5, 20)]], feather=0
+    )
+    assert mask[10, 10] == 0
+    assert mask[2, 2] == 1
+
+
+@pytest.mark.parametrize(
+    "opencv_shape",
+    [np.array([[1, 2, 20, 21]], dtype=np.int32), np.array([[[1, 2, 20, 21]]], dtype=np.int32)],
+)
+def test_line_detection_accepts_opencv_result_shapes(monkeypatch, opencv_shape):
+    monkeypatch.setattr("cv2.HoughLinesP", lambda *args, **kwargs: opencv_shape)
+    candidates = detect_line_candidates(np.zeros((64, 64), dtype=np.float32))
+    assert candidates == [[(1.0, 2.0), (20.0, 21.0)]]
 
 
 def test_artifact_mask_is_applied_during_stacking():
@@ -249,6 +321,23 @@ def test_drizzle_requires_supported_method_and_alignment_scale():
         combiner.combine(frames, method=StackingMethod.MEDIAN)
     with pytest.raises(ValueError, match="scale"):
         combiner.combine(frames, scale=4)
+
+
+def test_drizzle_accepts_moving_object_transform_callback():
+    frames = [frame(0)]
+    arrays = np.ones((1, 4, 5), dtype=np.float32)
+
+    def shifted(_):
+        return TransformData(
+            matrix=np.array([[1, 0, 1], [0, 1, 0], [0, 0, 1]], dtype=float)
+        )
+
+    result = DrizzleCombiner(Provider(arrays)).combine(
+        frames, scale=2, pixfrac=1, transform_for=shifted
+    )
+
+    assert np.all(result[:, :2] == 0)
+    assert np.any(result[:, 2:] > 0)
 
 
 def test_motion_analysis_reports_reversal_candidate():

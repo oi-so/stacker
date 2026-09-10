@@ -1,9 +1,9 @@
-"""Reviewable polyline editor for wires and narrow obstructions."""
+"""Reviewable line/polygon editor for frame-local obstructions."""
 
 from __future__ import annotations
 
 import numpy as np
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QObject, QPointF, Qt, QThread, Signal
 from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -12,11 +12,16 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
+    QProgressBar,
     QPushButton,
     QVBoxLayout,
 )
 
-from ..masks.artifacts import detect_line_candidates, polyline_weight_mask
+from ..masks.artifacts import (
+    detect_line_candidates,
+    polygon_weight_mask,
+    polyline_weight_mask,
+)
 from .viewer.image_viewer import ImageViewer
 
 
@@ -24,26 +29,42 @@ class WireMaskViewer(ImageViewer):
     def __init__(self):
         super().__init__()
         self.polylines: list[list[QPointF]] = [[]]
+        self.closed: list[bool] = [False]
         self.active_line = 0
         self._drag: tuple[int, int] | None = None
         self.display_width = 8.0
         self.setDragMode(self.DragMode.NoDrag)
 
-    def set_polylines(self, polylines) -> None:
+    def set_polylines(self, polylines, *, closed: bool = False) -> None:
         self.polylines = [
             [QPointF(float(x), float(y)) for x, y in line]
             for line in polylines
             if len(line) >= 2
         ] or [[]]
+        self.closed = [closed] * len(self.polylines)
         self.active_line = len(self.polylines) - 1
         self.viewport().update()
 
     def new_line(self) -> None:
+        self.new_shape(closed=False)
+
+    def new_area(self) -> None:
+        self.new_shape(closed=True)
+
+    def new_shape(self, *, closed: bool) -> None:
         if self.polylines and not self.polylines[-1]:
             self.active_line = len(self.polylines) - 1
+            self.closed[self.active_line] = closed
         else:
             self.polylines.append([])
+            self.closed.append(closed)
             self.active_line = len(self.polylines) - 1
+        self.viewport().update()
+
+    def clear_shapes(self) -> None:
+        self.polylines = [[]]
+        self.closed = [False]
+        self.active_line = 0
         self.viewport().update()
 
     def _nearest(self, point: QPointF) -> tuple[int, int] | None:
@@ -66,7 +87,17 @@ class WireMaskViewer(ImageViewer):
             if nearest is not None:
                 line_index, point_index = nearest
                 self.polylines[line_index].pop(point_index)
-                self.polylines = [line for line in self.polylines if line] or [[]]
+                retained = [
+                    (line, closed)
+                    for line, closed in zip(self.polylines, self.closed, strict=True)
+                    if line
+                ]
+                if retained:
+                    self.polylines = [line for line, _ in retained]
+                    self.closed = [closed for _, closed in retained]
+                else:
+                    self.polylines = [[]]
+                    self.closed = [False]
                 self.active_line = min(self.active_line, len(self.polylines) - 1)
                 self.viewport().update()
             return
@@ -94,8 +125,10 @@ class WireMaskViewer(ImageViewer):
     def drawForeground(self, painter: QPainter, rect) -> None:
         super().drawForeground(painter, rect)
         painter.setPen(QPen(QColor(255, 80, 0, 210), self.display_width))
-        for line in self.polylines:
-            if len(line) >= 2:
+        for line, closed in zip(self.polylines, self.closed, strict=True):
+            if closed and len(line) >= 3:
+                painter.drawPolygon(QPolygonF(line))
+            elif len(line) >= 2:
                 painter.drawPolyline(QPolygonF(line))
         painter.setPen(QPen(QColor(255, 255, 0), 2))
         for line in self.polylines:
@@ -103,10 +136,27 @@ class WireMaskViewer(ImageViewer):
                 painter.drawEllipse(point, 4, 4)
 
 
+class LineDetectionWorker(QObject):
+    finished = Signal(object)
+    failed = Signal(str)
+
+    def __init__(self, image: np.ndarray):
+        super().__init__()
+        self.image = image
+
+    def run(self) -> None:
+        try:
+            self.finished.emit(detect_line_candidates(self.image))
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
 class WireMaskEditorDialog(QDialog):
     def __init__(self, image: np.ndarray, *, line_width=8.0, feather=3.0, parent=None):
         super().__init__(parent)
         self.image = np.asarray(image)
+        self._detect_thread: QThread | None = None
+        self._detect_worker: LineDetectionWorker | None = None
         self.setWindowTitle("電線・電柱・障害物マスク編集")
         self.resize(1000, 720)
         layout = QVBoxLayout(self)
@@ -114,8 +164,8 @@ class WireMaskEditorDialog(QDialog):
         self.viewer.set_image(self.image)
         layout.addWidget(self.viewer, 1)
         self.status = QLabel(
+            "電線は一本ごとに「新しい線」、電柱や面状障害物は「新しい面」を選びます。"
             "左クリック: 点追加・ドラッグ / 右クリック: 点削除。"
-            "候補検出の結果は必ず確認してください。"
         )
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -123,10 +173,12 @@ class WireMaskEditorDialog(QDialog):
         controls = QHBoxLayout()
         new_line = QPushButton("新しい線")
         new_line.clicked.connect(self.viewer.new_line)
-        detect = QPushButton("電線候補を検出")
-        detect.clicked.connect(self._detect)
+        new_area = QPushButton("新しい面")
+        new_area.clicked.connect(self.viewer.new_area)
+        self.detect_button = QPushButton("電線候補を検出")
+        self.detect_button.clicked.connect(self._detect)
         clear = QPushButton("すべて消去")
-        clear.clicked.connect(lambda: self.viewer.set_polylines([]))
+        clear.clicked.connect(self.viewer.clear_shapes)
         self.width = QDoubleSpinBox()
         self.width.setRange(1, 2000)
         self.width.setValue(line_width)
@@ -142,7 +194,8 @@ class WireMaskEditorDialog(QDialog):
         )
         for widget in (
             new_line,
-            detect,
+            new_area,
+            self.detect_button,
             clear,
             self.width,
             self.feather,
@@ -151,6 +204,9 @@ class WireMaskEditorDialog(QDialog):
             controls.addWidget(widget)
         controls.addStretch()
         layout.addLayout(controls)
+        self.detection_progress = QProgressBar()
+        self.detection_progress.setVisible(False)
+        layout.addWidget(self.detection_progress)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -165,31 +221,88 @@ class WireMaskEditorDialog(QDialog):
         self.viewer.viewport().update()
 
     def _detect(self) -> None:
-        try:
-            candidates = detect_line_candidates(self.image)
-        except ValueError as exc:
-            self.status.setText(f"候補を検出できませんでした: {exc}")
+        if self._detect_thread is not None:
             return
+        self.status.setText("電線候補を解析しています…")
+        self.detection_progress.setRange(0, 0)
+        self.detection_progress.setVisible(True)
+        self.detect_button.setEnabled(False)
+        thread = QThread(self)
+        worker = LineDetectionWorker(self.image)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._detection_finished)
+        worker.failed.connect(self._detection_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        worker.failed.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._detection_thread_finished)
+        self._detect_thread = thread
+        self._detect_worker = worker
+        thread.start()
+
+    def _detection_finished(self, candidates) -> None:
         self.viewer.set_polylines(candidates)
         self.status.setText(
             f"候補 {len(candidates)}本。誤検出は右クリックで点を削除し、必要な線を修正してください。"
         )
 
+    def _detection_failed(self, message: str) -> None:
+        self.status.setText(f"候補を検出できませんでした: {message}")
+
+    def _detection_thread_finished(self) -> None:
+        self.detection_progress.setRange(0, 1)
+        self.detection_progress.setValue(0)
+        self.detection_progress.setVisible(False)
+        self.detect_button.setEnabled(True)
+        self._detect_thread = None
+        self._detect_worker = None
+
+    def reject(self) -> None:
+        if self._detect_thread is not None:
+            self.status.setText("候補解析が終わるまでお待ちください。")
+            return
+        super().reject()
+
     def accept(self) -> None:
-        if not any(len(line) >= 2 for line in self.viewer.polylines):
-            self.status.setText("2点以上の線を1本以上指定してください。")
+        if self._detect_thread is not None:
+            self.status.setText("候補解析が終わるまでお待ちください。")
+            return
+        valid = any(
+            len(line) >= (3 if closed else 2)
+            for line, closed in zip(
+                self.viewer.polylines, self.viewer.closed, strict=True
+            )
+        )
+        if not valid:
+            self.status.setText("線は2点以上、面は3点以上指定してください。")
             return
         super().accept()
 
     def mask(self) -> np.ndarray:
         polylines = [
             [(point.x(), point.y()) for point in line]
-            for line in self.viewer.polylines
-            if len(line) >= 2
+            for line, closed in zip(
+                self.viewer.polylines, self.viewer.closed, strict=True
+            )
+            if not closed and len(line) >= 2
         ]
-        return polyline_weight_mask(
+        polygons = [
+            [(point.x(), point.y()) for point in line]
+            for line, closed in zip(
+                self.viewer.polylines, self.viewer.closed, strict=True
+            )
+            if closed and len(line) >= 3
+        ]
+        line_mask = polyline_weight_mask(
             self.image.shape[:2],
             polylines,
             line_width=self.width.value(),
             feather=self.feather.value(),
         )
+        area_mask = polygon_weight_mask(
+            self.image.shape[:2], polygons, feather=self.feather.value()
+        )
+        return np.multiply(line_mask, area_mask, dtype=np.float32)

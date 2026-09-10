@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -9,7 +10,7 @@ import numpy as np
 import psutil
 
 from ..core.frame_provider import FrameProvider
-from ..io.image_data import AstroImage
+from ..io.image_data import AstroImage, TransformData
 from ..masks.weights import WeightMaskProvider
 from ..project.settings import StackingMethod
 
@@ -54,6 +55,7 @@ class DrizzleCombiner:
         frame_weights: dict[Path, float] | None = None,
         progress=None,
         is_cancelled=None,
+        transform_for: Callable[[AstroImage], TransformData] | None = None,
     ) -> np.ndarray | None:
         frames = [frame for frame in frames if frame.info.enabled]
         if not frames:
@@ -95,7 +97,8 @@ class DrizzleCombiner:
                 if mask_provider is None
                 else mask_provider.get_mask(frame, (height, width))
             )
-            matrix = frame.info.transform.matrix
+            transform = transform_for(frame) if transform_for is not None else frame.info.transform
+            matrix = transform.matrix
             if matrix is None:
                 matrix = np.eye(3, dtype=np.float64)
             inverse = np.linalg.inv(np.asarray(matrix, dtype=np.float64))

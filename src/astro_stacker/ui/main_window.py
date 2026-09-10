@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -97,6 +98,11 @@ class PipelineWorker(QObject):
         self.cancel_requested = True
 
 
+class PreviewEmitter(QObject):
+    ready = Signal(int, object, object)
+    failed = Signal(int, object, object)
+
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -115,6 +121,14 @@ class MainWindow(QMainWindow):
         self._selected_frame = None
         self.preview_provider = PreviewProvider(self.manager, ImageTransformer())
         self.preview_settings = PreviewSettings()
+        self._preview_request_id = 0
+        self._preview_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="astro-preview"
+        )
+        self._preview_future: Future | None = None
+        self._preview_emitter = PreviewEmitter()
+        self._preview_emitter.ready.connect(self._preview_loaded)
+        self._preview_emitter.failed.connect(self._preview_failed)
 
         self.setWindowTitle("Astro Stacker")
         self.resize(1400, 900)
@@ -245,16 +259,22 @@ class MainWindow(QMainWindow):
         return (
             self.aligned_export_action,
             self.star_mask_action,
+            self.ground_mask_action,
+            self.bad_pixels_action,
+        )
+
+    def _stack_actions(self):
+        return (
+            self.stack_action,
             self.hdr_action,
             self.nightscape_action,
-            self.ground_mask_action,
             self.timelapse_action,
-            self.bad_pixels_action,
             self.artifact_mask_action,
         )
 
     def _create_toolbar(self):
         toolbar = QToolBar("Main")
+        toolbar.setObjectName("mainToolbar")
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
         self.addToolBar(toolbar)
 
@@ -269,11 +289,20 @@ class MainWindow(QMainWindow):
             self.project_save_action,
             self.add_action,
             self.align_action,
-            self.stack_action,
-            self.save_action,
-            self.platesolve_action,
-            self.reset_action,
         ):
+            toolbar.addAction(action)
+
+        stack_button = QToolButton(toolbar)
+        stack_button.setDefaultAction(self.stack_action)
+        stack_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        stack_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        stack_menu = QMenu(stack_button)
+        for action in self._stack_actions()[1:]:
+            stack_menu.addAction(action)
+        stack_button.setMenu(stack_menu)
+        toolbar.addWidget(stack_button)
+
+        for action in (self.save_action, self.platesolve_action, self.reset_action):
             toolbar.addAction(action)
 
         processing_button = QToolButton(toolbar)
@@ -344,11 +373,13 @@ class MainWindow(QMainWindow):
             file_menu.addAction(action)
 
         process_menu = self.menuBar().addMenu("処理")
+        process_menu.addAction(self.align_action)
+        stack_menu = process_menu.addMenu("スタック")
+        for action in self._stack_actions():
+            stack_menu.addAction(action)
+        process_menu.addSeparator()
         for action in self._processing_actions():
             process_menu.addAction(action)
-        process_menu.addSeparator()
-        process_menu.addAction(self.align_action)
-        process_menu.addAction(self.stack_action)
 
         settings_menu = self.menuBar().addMenu("設定")
         language_menu = settings_menu.addMenu("言語 / Language")
@@ -447,6 +478,7 @@ class MainWindow(QMainWindow):
         self._restoring = True
         try:
             self.manager.unload_all()
+            self.preview_provider.clear()
             self.controller.project = project
             self._selected_frame = None
             def reference_changed(image):
@@ -474,6 +506,7 @@ class MainWindow(QMainWindow):
                 self.frame_table.select_frame(selected)
             self._showing_result = bool(view.get("result") and project.result.stacked_image is not None)
             if self._showing_result:
+                self._preview_request_id += 1
                 self.viewer.set_image(project.result.stacked_image)
             if "zoom" in view:
                 self.viewer.setTransform(QTransform(*view["zoom"]))
@@ -575,6 +608,10 @@ class MainWindow(QMainWindow):
 
     def _preview_frame(self, image):
         self._showing_result = False
+        self._preview_request_id += 1
+        request_id = self._preview_request_id
+        if self._preview_future is not None:
+            self._preview_future.cancel()
         if image is not self._selected_frame:
             self._mark_dirty()
         self._selected_frame = image
@@ -582,26 +619,64 @@ class MainWindow(QMainWindow):
         if image is None:
             self.viewer.set_image(None)
             return
+        if not self._busy:
+            self.progress.setRange(0, 0)
+            self.progress_label.setText(f"プレビュー読み込み中: {image.info.path.name}")
+        settings = PreviewSettings(**asdict(self.preview_settings))
+        future = self._preview_executor.submit(
+            self.preview_provider.get_image, image, settings
+        )
+        self._preview_future = future
 
-        try:
-            preview = self.preview_provider.get_image(image, self.preview_settings)
-            marker = moving_object_preview_pixel(
-                self.controller.project,
-                image,
-                aligned=self.preview_settings.aligned and image.info.is_aligned,
-                scale_x=preview.scale_x,
-                scale_y=preview.scale_y,
-            )
-            self.viewer.set_image(
-                preview.image,
-                preview.all_stars,
-                preview.alignment_stars,
-                preview.scale_x,
-                preview.scale_y,
-                marker,
-                )
-        except Exception as exc:
-            ErrorDialog.show_exception(self, "画像表示エラー", exc)
+        def completed(done: Future) -> None:
+            try:
+                self._preview_emitter.ready.emit(request_id, image, done.result())
+            except Exception as exc:
+                try:
+                    self._preview_emitter.failed.emit(request_id, image, exc)
+                except RuntimeError:
+                    # The window may have closed while a decoder was finishing.
+                    pass
+
+        future.add_done_callback(completed)
+
+    @Slot(int, object, object)
+    def _preview_loaded(self, request_id: int, image, preview) -> None:
+        if (
+            request_id != self._preview_request_id
+            or image is not self._selected_frame
+            or self._showing_result
+        ):
+            return
+        marker = moving_object_preview_pixel(
+            self.controller.project,
+            image,
+            aligned=self.preview_settings.aligned and image.info.is_aligned,
+            scale_x=preview.scale_x,
+            scale_y=preview.scale_y,
+        )
+        self.viewer.set_image(
+            preview.image,
+            preview.all_stars,
+            preview.alignment_stars,
+            preview.scale_x,
+            preview.scale_y,
+            marker,
+        )
+        if not self._busy:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(0)
+            self.progress_label.setText("準備完了")
+
+    @Slot(int, object, object)
+    def _preview_failed(self, request_id: int, image, exc: Exception) -> None:
+        if request_id != self._preview_request_id or image is not self._selected_frame:
+            return
+        if not self._busy:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(0)
+            self.progress_label.setText("プレビュー読み込み失敗")
+        ErrorDialog.show_exception(self, "画像表示エラー", exc)
 
 
     def _show_stack_dialog(self, use_aligned_image: bool | None = None) -> bool:
@@ -1081,6 +1156,7 @@ class MainWindow(QMainWindow):
         self._stacked = self.controller.project.result.stacked_image is not None
         if self._stacked:
             self._showing_result = True
+            self._preview_request_id += 1
             self.viewer.set_image(self.controller.project.result.stacked_image)
         logger.info("スタックが完了しました")
 
@@ -1114,6 +1190,8 @@ class MainWindow(QMainWindow):
             action.setEnabled(not busy)
         for action in self._processing_actions():
             action.setEnabled(not busy)
+        for action in self._stack_actions()[1:]:
+            action.setEnabled(not busy)
         for action in (
             self.add_action,
             self.align_action,
@@ -1131,7 +1209,8 @@ class MainWindow(QMainWindow):
             return
         has_lights = bool(self.controller.project.light_frames)
         self.align_action.setEnabled(has_lights)
-        self.stack_action.setEnabled(has_lights)
+        for action in self._stack_actions():
+            action.setEnabled(has_lights)
         self.save_action.setEnabled(self.controller.project.result.stacked_image is not None)
         self.platesolve_action.setEnabled(self._selected_frame is not None)
         self.add_action.setEnabled(True)
@@ -1159,6 +1238,7 @@ class MainWindow(QMainWindow):
             return
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/state", self.saveState())
+        self._preview_executor.shutdown(wait=False, cancel_futures=True)
         super().closeEvent(event)
 
     @Slot(str, int, int, str)

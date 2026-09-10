@@ -46,8 +46,11 @@ class DrizzleSettings:
 @dataclass
 class CosmeticCorrectionSettings:
     enabled: bool = False
+    source: str = "map"
     bad_pixel_map_path: Path | None = None
     method: str = "median"
+    light_sigma: float = 10.0
+    light_persistence: float = 0.7
 
 
 @dataclass

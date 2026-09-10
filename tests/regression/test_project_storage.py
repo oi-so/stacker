@@ -212,6 +212,27 @@ def test_calibration_settings_invalidate_reused_alignment(tmp_path):
     assert not project.is_alignment_valid()
 
 
+def test_light_only_cosmetic_settings_roundtrip(tmp_path):
+    project = make_project(tmp_path)
+    cosmetic = project.settings.processing.cosmetic_correction
+    cosmetic.enabled = True
+    cosmetic.source = "lights"
+    cosmetic.light_sigma = 12.0
+    cosmetic.light_persistence = 0.8
+    project.alignment_signature = project.make_alignment_signature()
+    path = tmp_path / "lights-cosmetic.astrostacker"
+
+    save_project(project, path)
+    restored, warnings = load_project(path)
+
+    assert not warnings
+    restored_cosmetic = restored.settings.processing.cosmetic_correction
+    assert restored_cosmetic.source == "lights"
+    assert restored_cosmetic.light_sigma == 12.0
+    assert restored_cosmetic.light_persistence == 0.8
+    assert restored.is_alignment_valid()
+
+
 def test_project_cannot_overwrite_source_image(tmp_path):
     project = make_project(tmp_path)
     path = project.light_frames[0].info.path

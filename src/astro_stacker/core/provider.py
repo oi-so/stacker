@@ -4,19 +4,22 @@ Defines the interface for accessing image data in the combination pipeline.
 """
 
 from __future__ import annotations
+
+from collections import OrderedDict
 from dataclasses import dataclass
+from threading import RLock
+from typing import TYPE_CHECKING
+
 import numpy as np
 from skimage.transform import SimilarityTransform
 
-from ..io.image_data import AstroImage, ColorMode
-from ..io.image_manager import ImageManager
+from ..alignment.transform import ImageTransformer
 from ..core.debayer import debayer
-from ..alignment.transform import ImageTransformer, AlignedFrameProvider
+from ..io.image_data import AstroImage, ColorMode, TransformData
+from ..io.image_manager import ImageManager
+from ..stars.star_data import Star, StarCatalog
 from .frame_provider import FrameProvider
-from ..stars.star_data import StarCatalog, Star
 
-
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..calibration.calibration import Calibrator
 
@@ -26,6 +29,7 @@ class PreviewSettings:
     binning: int = 2
     debayer: bool = True
     before_binning: bool = True
+    max_dimension: int = 2048
 
 
 
@@ -115,39 +119,108 @@ class PreviewImage:
     alignment_stars: StarCatalog | None = None
 
 class PreviewProvider:
-    def __init__(self, manager: ImageManager, transformer: ImageTransformer | None = None, calibrator: Calibrator | None = None):
+    def __init__(
+        self,
+        manager: ImageManager,
+        transformer: ImageTransformer | None = None,
+        calibrator: Calibrator | None = None,
+        max_cache_bytes: int = 128 * 1024**2,
+    ):
         self.manager = manager
         self.transformer = transformer
         self.calibrator = calibrator
+        self.max_cache_bytes = max(0, max_cache_bytes)
+        self._cache = OrderedDict()
+        self._cache_bytes = 0
+        self._lock = RLock()
+
+    @staticmethod
+    def _bin(image: np.ndarray, factor: int) -> np.ndarray:
+        if factor <= 1:
+            return image
+        h, w = image.shape[:2]
+        h2, w2 = (h // factor) * factor, (w // factor) * factor
+        cropped = image[:h2, :w2]
+        if cropped.ndim == 2:
+            return cropped.reshape(h2 // factor, factor, w2 // factor, factor).mean(
+                axis=(1, 3), dtype=np.float32
+            )
+        channels = cropped.shape[2]
+        return cropped.reshape(
+            h2 // factor, factor, w2 // factor, factor, channels
+        ).mean(axis=(1, 3), dtype=np.float32)
+
+    def _cache_get(self, key):
+        with self._lock:
+            image = self._cache.get(key)
+            if image is not None:
+                self._cache.move_to_end(key)
+            return image
+
+    def _cache_put(self, key, image: np.ndarray) -> None:
+        if image.nbytes > self.max_cache_bytes:
+            return
+        with self._lock:
+            old = self._cache.pop(key, None)
+            if old is not None:
+                self._cache_bytes -= old.nbytes
+            while self._cache and self._cache_bytes + image.nbytes > self.max_cache_bytes:
+                self._cache_bytes -= self._cache.popitem(last=False)[1].nbytes
+            self._cache[key] = image
+            self._cache_bytes += image.nbytes
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cache.clear()
+            self._cache_bytes = 0
 
     def get_image(self, astro_image: AstroImage, settings: PreviewSettings) -> PreviewImage:
-        provider: FrameProvider = ImageManagerProvider(self.manager)
         is_aligned_applied = False
         transform_matrix = None
-
-        if (
-            self.transformer and settings.aligned
-            and astro_image.info.is_aligned
-        ):
-            provider = AlignedFrameProvider(
-                provider,
-                self.transformer
-            )
+        if self.transformer and settings.aligned and astro_image.info.is_aligned:
             is_aligned_applied = True
             transform_matrix = astro_image.info.transform.matrix
-
-        if settings.before_binning:
-            if settings.binning != 1:
-                provider = BinningFrameProvider(provider, settings.binning)
-
-
-        if settings.debayer:
-            provider = DebayerFrameProvider(provider)
-
-        if not settings.before_binning:
-            provider = BinningFrameProvider(provider, settings.binning)
-
-        final_image = provider.get_image(astro_image)
+        maximum = max(256, int(settings.max_dimension))
+        auto_factor = max(
+            1,
+            int(np.ceil(max(astro_image.info.shape.width, astro_image.info.shape.height) / maximum)),
+        )
+        factor = max(1, int(settings.binning), auto_factor)
+        matrix_key = (
+            None
+            if transform_matrix is None
+            else tuple(np.asarray(transform_matrix, dtype=np.float64).ravel())
+        )
+        key = (
+            self.manager.cache_key(astro_image),
+            factor,
+            settings.debayer,
+            settings.before_binning,
+            matrix_key,
+        )
+        final_image = self._cache_get(key)
+        if final_image is None:
+            image = self.manager.get_image(astro_image)
+            if settings.before_binning:
+                if settings.debayer and astro_image.info.color_mode == ColorMode.BAYER:
+                    image = debayer(image, astro_image.info.cfa_type)
+                    image = self._bin(image, factor)
+                else:
+                    image = self._bin(image, factor)
+            elif settings.debayer and astro_image.info.color_mode == ColorMode.BAYER:
+                image = debayer(image, astro_image.info.cfa_type)
+            if is_aligned_applied and transform_matrix is not None:
+                matrix = np.asarray(transform_matrix, dtype=np.float64)
+                if settings.before_binning and factor > 1:
+                    scale = np.diag([1 / factor, 1 / factor, 1.0])
+                    matrix = scale @ matrix @ np.linalg.inv(scale)
+                image = self.transformer.apply_transform(
+                    image, astro_image, TransformData(matrix=matrix)
+                )
+            if not settings.before_binning:
+                image = self._bin(image, factor)
+            final_image = np.asarray(image, dtype=np.float32)
+            self._cache_put(key, final_image)
 
         if is_aligned_applied and transform_matrix is not None:
             all_stars = self._transform_catalog(astro_image.info.stars.all_stars, transform_matrix)
@@ -158,8 +231,8 @@ class PreviewProvider:
 
         return PreviewImage(
             final_image,
-            scale_x = 1 / settings.binning,
-            scale_y = 1 / settings.binning,
+            scale_x=final_image.shape[1] / astro_image.info.shape.width,
+            scale_y=final_image.shape[0] / astro_image.info.shape.height,
             all_stars=all_stars,
             alignment_stars=alignment_stars
         )

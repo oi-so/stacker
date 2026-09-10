@@ -128,7 +128,7 @@ class Project:
                                 signature = None
                             entries.append((frame.info.path, signature))
                 calibration_state.append((name, active, tuple(entries)))
-        if cosmetic.enabled:
+        if cosmetic.enabled and cosmetic.source == "map":
             try:
                 bad_pixel_signature = (
                     fingerprint(cosmetic.bad_pixel_map_path)
@@ -141,9 +141,21 @@ class Project:
                 (
                     "cosmetic_correction",
                     cosmetic.enabled,
+                    cosmetic.source,
                     cosmetic.bad_pixel_map_path,
                     cosmetic.method,
                     bad_pixel_signature,
+                )
+            )
+        elif cosmetic.enabled:
+            calibration_state.append(
+                (
+                    "cosmetic_correction",
+                    cosmetic.enabled,
+                    cosmetic.source,
+                    cosmetic.method,
+                    cosmetic.light_sigma,
+                    cosmetic.light_persistence,
                 )
             )
         return AlignmentSignature(

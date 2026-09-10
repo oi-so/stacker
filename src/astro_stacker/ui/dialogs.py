@@ -200,12 +200,15 @@ class StackingSettingsDialog(QDialog):
         basic_tab = QWidget()
         quality_tab = QWidget()
         correction_tab = QWidget()
+        artifact_tab = QWidget()
         layout = QFormLayout(basic_tab)
         quality_layout = QFormLayout(quality_tab)
         correction_layout = QFormLayout(correction_tab)
+        artifact_tab_layout = QFormLayout(artifact_tab)
         tabs.addTab(basic_tab, "基本")
         tabs.addTab(quality_tab, "正規化・選別")
-        tabs.addTab(correction_tab, "Drizzle・補正")
+        tabs.addTab(correction_tab, "Drizzle・Bad Pixel")
+        tabs.addTab(artifact_tab, "障害物")
         root_layout.addWidget(tabs)
         self.method = QComboBox()
         for method in StackingMethod:
@@ -349,8 +352,14 @@ class StackingSettingsDialog(QDialog):
         cosmetic = project.settings.processing.cosmetic_correction
         cosmetic_box = QGroupBox("Bad Pixel補正")
         cosmetic_layout = QFormLayout(cosmetic_box)
-        self.cosmetic_enabled = QCheckBox("Bad Pixel Mapで補正")
+        self.cosmetic_enabled = QCheckBox("Bad Pixel補正")
         self.cosmetic_enabled.setChecked(cosmetic.enabled)
+        self.bad_pixel_source = QComboBox()
+        self.bad_pixel_source.addItem("保存済みBad Pixel Map", "map")
+        self.bad_pixel_source.addItem("Lightsから自動検出（Dark/Bias不要）", "lights")
+        self.bad_pixel_source.setCurrentIndex(
+            max(0, self.bad_pixel_source.findData(cosmetic.source))
+        )
         self.bad_pixel_path = QLineEdit(
             str(cosmetic.bad_pixel_map_path) if cosmetic.bad_pixel_map_path else ""
         )
@@ -365,10 +374,22 @@ class StackingSettingsDialog(QDialog):
         self.bad_pixel_method.setCurrentIndex(
             max(0, self.bad_pixel_method.findData(cosmetic.method))
         )
+        self.bad_pixel_sigma = QDoubleSpinBox()
+        self.bad_pixel_sigma.setRange(3, 30)
+        self.bad_pixel_sigma.setValue(cosmetic.light_sigma)
+        self.bad_pixel_persistence = QDoubleSpinBox()
+        self.bad_pixel_persistence.setRange(0.3, 1.0)
+        self.bad_pixel_persistence.setSingleStep(0.05)
+        self.bad_pixel_persistence.setValue(cosmetic.light_persistence)
+        self.bad_pixel_source.currentIndexChanged.connect(self._update_bad_pixel_widgets)
         cosmetic_layout.addRow(self.cosmetic_enabled)
+        cosmetic_layout.addRow("検出元", self.bad_pixel_source)
         cosmetic_layout.addRow("Bad Pixel Map", bad_pixel_row)
+        cosmetic_layout.addRow("Lights検出 sigma", self.bad_pixel_sigma)
+        cosmetic_layout.addRow("継続率", self.bad_pixel_persistence)
         cosmetic_layout.addRow("補間方式", self.bad_pixel_method)
         correction_layout.addRow(cosmetic_box)
+        self._update_bad_pixel_widgets()
 
         artifacts = project.settings.processing.artifact_masks
         self._pending_artifact_paths = dict(artifacts.mask_paths)
@@ -400,7 +421,7 @@ class StackingSettingsDialog(QDialog):
         artifact_layout.addRow(artifact_note)
         artifact_layout.addRow("対象Light", self.artifact_frame)
         artifact_layout.addRow(artifact_buttons)
-        correction_layout.addRow(artifact_box)
+        artifact_tab_layout.addRow(artifact_box)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -417,6 +438,12 @@ class StackingSettingsDialog(QDialog):
         if path:
             remember_dialog_path(self.settings, path)
             self.bad_pixel_path.setText(path)
+
+    def _update_bad_pixel_widgets(self) -> None:
+        from_lights = self.bad_pixel_source.currentData() == "lights"
+        self.bad_pixel_path.setEnabled(not from_lights)
+        self.bad_pixel_sigma.setEnabled(from_lights)
+        self.bad_pixel_persistence.setEnabled(from_lights)
 
     def _refresh_artifact_count(self) -> None:
         self.artifact_masks_enabled.setText(
@@ -482,15 +509,26 @@ class StackingSettingsDialog(QDialog):
                     self, "Drizzle", "DrizzleではAverageまたはAddを選択してください。"
                 )
                 return
-            if self.moving_basis_btn.isChecked():
-                QMessageBox.warning(self, "Drizzle", "移動天体基準ではDrizzleを使用できません。")
-                return
         bad_pixel_path = self.bad_pixel_path.text().strip()
-        if self.cosmetic_enabled.isChecked() and not bad_pixel_path:
+        bad_pixel_source = self.bad_pixel_source.currentData()
+        if (
+            self.cosmetic_enabled.isChecked()
+            and bad_pixel_source == "map"
+            and not bad_pixel_path
+        ):
             QMessageBox.warning(self, "Bad Pixel補正", "Bad Pixel Mapを選択してください。")
             return
-        if bad_pixel_path and not Path(bad_pixel_path).is_file():
+        if bad_pixel_source == "map" and bad_pixel_path and not Path(bad_pixel_path).is_file():
             QMessageBox.warning(self, "Bad Pixel補正", "指定したBad Pixel Mapが見つかりません。")
+            return
+        if (
+            self.cosmetic_enabled.isChecked()
+            and bad_pixel_source == "lights"
+            and sum(frame.info.enabled for frame in self.project.light_frames) < 3
+        ):
+            QMessageBox.warning(
+                self, "Bad Pixel補正", "Lightsからの自動検出には3枚以上必要です。"
+            )
             return
         artifacts = self.project.settings.processing.artifact_masks
         if self.artifact_masks_enabled.isChecked() and not self._pending_artifact_paths:
@@ -533,8 +571,11 @@ class StackingSettingsDialog(QDialog):
         drizzle.pixfrac = self.drizzle_pixfrac.value()
         cosmetic = self.project.settings.processing.cosmetic_correction
         cosmetic.enabled = self.cosmetic_enabled.isChecked()
+        cosmetic.source = bad_pixel_source
         cosmetic.bad_pixel_map_path = Path(bad_pixel_path) if bad_pixel_path else None
         cosmetic.method = self.bad_pixel_method.currentData()
+        cosmetic.light_sigma = self.bad_pixel_sigma.value()
+        cosmetic.light_persistence = self.bad_pixel_persistence.value()
         artifacts.mask_paths = self._pending_artifact_paths
         artifacts.line_width = self._pending_artifact_line_width
         artifacts.feather = self._pending_artifact_feather

@@ -1,25 +1,26 @@
 from __future__ import annotations
 
-from pathlib import Path
-from fractions import Fraction
 from enum import IntEnum
+from fractions import Fraction
+from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHBoxLayout,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
-    QMenu,
 )
-from PySide6.QtGui import QKeyEvent
 
-from ..constants import FrameType
 from ...io.image_data import AstroImage
+from ..constants import FrameType
+
 
 class Column(IntEnum):
     ENABLED = 0
@@ -134,6 +135,21 @@ class FrameTable(QWidget):
 
             table = FrameQTableWidget(0, len(self.HEADERS))
             table.setHorizontalHeaderLabels([self.HEADERS[col] for col in Column])
+            for column, width in {
+                Column.ENABLED: 52,
+                Column.FILENAME: 220,
+                Column.DATETIME: 145,
+                Column.RESOLUTION: 105,
+            }.items():
+                table.setColumnWidth(column, width)
+            for column in Column:
+                if column not in {
+                    Column.ENABLED,
+                    Column.FILENAME,
+                    Column.DATETIME,
+                    Column.RESOLUTION,
+                }:
+                    table.setColumnWidth(column, 82)
             table.setSortingEnabled(True)
             table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
             table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -274,7 +290,6 @@ class FrameTable(QWidget):
                 table.setItem(row, Column.SCALE, self._item(f"{scale:.5f}", scale))
 
         table.setSortingEnabled(True)
-        table.resizeColumnsToContents()
         table.blockSignals(False)
 
 
@@ -315,8 +330,10 @@ class FrameTable(QWidget):
         self.frame_selected.emit(self._frames[frame_type][source_row])
 
     def _on_item_changed(self, frame_type: FrameType, item: QTableWidgetItem):
-        if self._bulk_updating: return
-        if item.column() != 0: return
+        if self._bulk_updating:
+            return
+        if item.column() != 0:
+            return
 
         table = self._tables[frame_type]
         checked = (item.checkState() == Qt.CheckState.Checked)
@@ -343,7 +360,8 @@ class FrameTable(QWidget):
         
         for view_row in target_rows:
             enabled_item = table.item(view_row, 0)
-            if enabled_item is None: continue
+            if enabled_item is None:
+                continue
             
             source_row = enabled_item.data(Qt.ItemDataRole.UserRole)
             image = self._frames[frame_type][source_row]

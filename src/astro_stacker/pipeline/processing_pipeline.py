@@ -5,7 +5,10 @@ from pathlib import Path
 
 import numpy as np
 
-from ..calibration.bad_pixels import BadPixelCorrectedFrameProvider
+from ..calibration.bad_pixels import (
+    BadPixelCorrectedFrameProvider,
+    detect_bad_pixels_from_lights,
+)
 from ..calibration.calibration import Calibrator, MasterFrameBuilder
 from ..core.provider import CalibratedFrameProvider, DebayerFrameProvider, ImageManagerProvider
 from ..io.image_data import AstroImage
@@ -211,12 +214,28 @@ class ProcessingPipeline:
         if calibrate_before_align or cosmetic.enabled:
             provider = CalibratedFrameProvider(provider, calibrator)
         if cosmetic.enabled:
-            if cosmetic.bad_pixel_map_path is None:
-                raise ValueError("Bad Pixel補正が有効ですが、Bad Pixel Mapが未指定です。")
-            if not cosmetic.bad_pixel_map_path.exists():
-                raise ValueError(f"Bad Pixel Mapが見つかりません: {cosmetic.bad_pixel_map_path}")
-            bad_pixel_frame = load_info(cosmetic.bad_pixel_map_path)
-            bad_pixel_map = self.manager.get_image(bad_pixel_frame)
+            if cosmetic.source == "lights":
+                bad_pixel_map = detect_bad_pixels_from_lights(
+                    provider,
+                    project.light_frames,
+                    sigma=cosmetic.light_sigma,
+                    persistence=cosmetic.light_persistence,
+                    progress=progress,
+                    is_cancelled=is_cancelled,
+                )
+                if bad_pixel_map is None:
+                    return provider, calibrator, calibrate_before_align, cosmetic
+            elif cosmetic.source == "map":
+                if cosmetic.bad_pixel_map_path is None:
+                    raise ValueError("Bad Pixel補正が有効ですが、Bad Pixel Mapが未指定です。")
+                if not cosmetic.bad_pixel_map_path.exists():
+                    raise ValueError(
+                        f"Bad Pixel Mapが見つかりません: {cosmetic.bad_pixel_map_path}"
+                    )
+                bad_pixel_frame = load_info(cosmetic.bad_pixel_map_path)
+                bad_pixel_map = self.manager.get_image(bad_pixel_frame)
+            else:
+                raise ValueError(f"未対応のBad Pixel検出元です: {cosmetic.source}")
             provider = BadPixelCorrectedFrameProvider(
                 provider,
                 bad_pixel_map,
