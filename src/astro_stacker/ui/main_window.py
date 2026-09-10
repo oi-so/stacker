@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 
+import numpy as np
 from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QTransform
 from PySide6.QtWidgets import (
@@ -12,9 +13,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QMainWindow,
-    QInputDialog,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -26,29 +27,36 @@ from PySide6.QtWidgets import (
 )
 
 from ..alignment.transform import AlignedFrameProvider, ImageTransformer
-from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
+from ..analysis.motion import analyze_motion, suggest_time_groups
 from ..calibration.bad_pixels import detect_bad_pixels
+from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
 from ..export.aligned import export_aligned_frames
 from ..ground.mask import estimate_ground_mask
 from ..io.image_manager import ImageManager
+from ..io.loader import load_info
 from ..io.saver import save_image
 from ..masks.stars import generate_star_mask
 from ..moving_object.marker import moving_object_preview_pixel
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.extended_pipeline import HDRPipeline, TimelapseStackPipeline
+from ..pipeline.nightscape_pipeline import NightscapePipeline
 from ..pipeline.processing_pipeline import ProcessingPipeline
 from ..platesolve import AstrometryNetSolver, PlateSolveSettings
+from ..project.settings import BoundaryMode, GroundSource
 from .constants import FrameType
 from .controllers.project_controller import ProjectController
 from .dialogs import (
     AlignmentSettingsDialog,
     ErrorDialog,
     HDRSettingsDialog,
+    NightscapeSettingsDialog,
+    ParallelSettingsDialog,
     SaveDialog,
     StackingSettingsDialog,
     TimelapseSettingsDialog,
     show_language_restart,
 )
+from .mask_editor import GroundMaskEditorDialog
 from .panels.frame_table import FrameTable
 from .panels.info_panel import InfoPanel
 from .panels.log_panel import LogPanel, QtLogHandler
@@ -300,12 +308,15 @@ class MainWindow(QMainWindow):
         ground_mask.triggered.connect(self._create_ground_mask)
         bad_pixels = QAction("Bad Pixel Mapを作成...", self)
         bad_pixels.triggered.connect(self._create_bad_pixel_map)
+        nightscape = QAction("新星景...", self)
+        nightscape.triggered.connect(self._run_nightscape)
         process_menu.addAction(aligned_export)
         process_menu.addAction(star_mask)
         process_menu.addAction(hdr)
         process_menu.addAction(timelapse)
         process_menu.addAction(ground_mask)
         process_menu.addAction(bad_pixels)
+        process_menu.addAction(nightscape)
         process_menu.addSeparator()
         process_menu.addAction(self.align_action)
         process_menu.addAction(self.stack_action)
@@ -318,6 +329,9 @@ class MainWindow(QMainWindow):
         english.triggered.connect(lambda: self._set_language("en"))
         language_menu.addAction(japanese)
         language_menu.addAction(english)
+        parallel = QAction("並列処理...", self)
+        parallel.triggered.connect(self._show_parallel_settings)
+        settings_menu.addAction(parallel)
 
     def _project_actions(self):
         return (self.project_open_action, self.project_save_action, self.project_save_as_action,
@@ -713,6 +727,7 @@ class MainWindow(QMainWindow):
                 suffix=suffix,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                requested_workers=project.settings.processing.parallel_workers,
             )
 
         def succeeded():
@@ -756,39 +771,129 @@ class MainWindow(QMainWindow):
                 suffix=suffix,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                requested_workers=project.settings.processing.parallel_workers,
             )
 
         self._run_worker(work, on_success=lambda: logger.info("タイムラプス素材を出力しました"))
+
+    def _show_parallel_settings(self):
+        if (
+            ParallelSettingsDialog(self.controller.project, self).exec()
+            == ParallelSettingsDialog.DialogCode.Accepted
+        ):
+            self._mark_dirty()
+
+    def _run_nightscape(self):
+        project = self.controller.project
+        sky_frames = [frame for frame in project.light_frames if frame.info.enabled]
+        if not sky_frames:
+            QMessageBox.information(self, "新星景", "ライトフレームを追加してください。")
+            return
+        suggestion = None
+        try:
+            suggestion = suggest_time_groups(analyze_motion(sky_frames), len(sky_frames))
+        except ValueError:
+            pass
+        dialog = NightscapeSettingsDialog(
+            project, sky_frames[0].info.path.parent, self, suggestion=suggestion
+        )
+        if dialog.exec() != NightscapeSettingsDialog.DialogCode.Accepted:
+            return
+        output, suffix, ground_paths, user_mask_path = dialog.selected()
+        settings = project.settings.processing.nightscape
+        base_provider = ImageManagerProvider(self.manager)
+        if settings.star_alignment:
+            if not all(frame.info.is_aligned for frame in sky_frames):
+                QMessageBox.warning(self, "新星景", "星空処理の前に全画像を位置合わせしてください。")
+                return
+            sky_provider = AlignedFrameProvider(base_provider, ImageTransformer())
+        else:
+            sky_provider = base_provider
+        reference = project.reference_image or sky_frames[len(sky_frames) // 2]
+        reference_image = self.manager.get_image(reference)
+        if settings.boundary_mode == BoundaryMode.USER_MASK:
+            mask_frame = load_info(user_mask_path)
+            sky_mask = np.squeeze(self.manager.get_image(mask_frame)).astype(np.float32)
+            finite = sky_mask[np.isfinite(sky_mask)]
+            if finite.size and float(finite.max()) > 1:
+                sky_mask /= float(finite.max())
+            sky_mask = np.clip(sky_mask, 0, 1)
+        else:
+            estimate = estimate_ground_mask(reference_image, settings.feather)
+            editor = GroundMaskEditorDialog(reference_image, estimate, self)
+            editor.feather.setValue(settings.feather)
+            if editor.exec() != GroundMaskEditorDialog.DialogCode.Accepted:
+                return
+            sky_mask = editor.mask()
+        if settings.ground_source == GroundSource.SEPARATE_FRAMES:
+            ground_frames = [load_info(path) for path in ground_paths]
+        else:
+            ground_frames = sky_frames
+        star_mask = None
+        if settings.use_star_mask and reference.info.stars.all_stars is not None:
+            star_mask = generate_star_mask(
+                sky_mask.shape,
+                reference.info.stars.all_stars,
+                project.settings.processing.star_mask,
+            )
+        holder = {}
+
+        def work(progress, is_cancelled):
+            holder["result"] = NightscapePipeline(sky_provider, base_provider).run(
+                sky_frames,
+                ground_frames,
+                project.settings.light_frame,
+                settings,
+                sky_mask,
+                star_mask=star_mask,
+                output_directory=output,
+                suffix=suffix,
+                progress=progress,
+                is_cancelled=is_cancelled,
+            )
+
+        def succeeded():
+            products = holder["result"].products
+            display = products.get("final_composite")
+            if display is None:
+                display = products.get("merged_sky")
+            if display is not None:
+                project.result.stacked_image = display
+                self._stacking_finished()
+
+        self._run_worker(work, on_success=succeeded)
 
     def _create_ground_mask(self):
         frame = self._selected_frame
         if frame is None:
             QMessageBox.information(self, "地上領域推定", "フレームを選択してください。")
             return
-        dialog = SaveDialog(frame.info.path.parent, self)
-        dialog.setWindowTitle("推定した地上マスクを保存")
-        dialog.path.setText(str(frame.info.path.with_name(frame.info.path.stem + "_ground_mask.fits")))
-        if dialog.exec() != SaveDialog.DialogCode.Accepted:
-            return
-        path, options = dialog.selected()
         holder = {}
 
         def work(progress, is_cancelled):
             if is_cancelled():
                 return
             progress("地上領域を推定中", 0, 1, frame.info.path.name)
-            holder["estimate"] = estimate_ground_mask(self.manager.get_image(frame))
-            save_image(
-                holder["estimate"].sky_weight,
-                path,
-                metadata=frame.info.exif,
-                **options,
-            )
+            holder["image"] = self.manager.get_image(frame)
+            holder["estimate"] = estimate_ground_mask(holder["image"])
 
         def succeeded():
             estimate = holder.get("estimate")
-            if estimate and estimate.warning:
-                QMessageBox.warning(self, "地上領域推定", estimate.warning)
+            if estimate is None:
+                return
+            editor = GroundMaskEditorDialog(holder["image"], estimate, self)
+            if editor.exec() != GroundMaskEditorDialog.DialogCode.Accepted:
+                return
+            dialog = SaveDialog(frame.info.path.parent, self)
+            dialog.setWindowTitle("編集した地上マスクを保存")
+            dialog.path.setText(
+                str(frame.info.path.with_name(frame.info.path.stem + "_ground_mask.fits"))
+            )
+            if dialog.exec() != SaveDialog.DialogCode.Accepted:
+                return
+            path, options = dialog.selected()
+            save_image(editor.mask(), path, metadata=frame.info.exif, **options)
+            logger.info("地上マスクを保存しました: %s", path)
 
         self._run_worker(work, on_success=succeeded)
 

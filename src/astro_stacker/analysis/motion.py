@@ -1,6 +1,7 @@
 """Star/ground relative-motion summary and reversal candidate detection."""
 
 from dataclasses import dataclass
+from itertools import pairwise
 
 import numpy as np
 
@@ -16,6 +17,14 @@ class MotionAnalysis:
     relative_pixels_per_frame: float | None
     reversal_candidates: tuple[int, ...]
     recommendation: str
+    confidence: float
+
+
+@dataclass(frozen=True)
+class GroupSuggestion:
+    split_indices: tuple[int, ...]
+    groups: tuple[tuple[int, int], ...]
+    reason: str
     confidence: float
 
 
@@ -91,3 +100,17 @@ def analyze_motion(
         recommendation=recommendation,
         confidence=completeness,
     )
+
+
+def suggest_time_groups(analysis: MotionAnalysis, frame_count: int) -> GroupSuggestion:
+    """Convert measured reversal candidates into reviewable frame ranges."""
+    splits = tuple(
+        sorted({index for index in analysis.reversal_candidates if 0 < index < frame_count})
+    )
+    boundaries = (0, *splits, frame_count)
+    groups = tuple(pairwise(boundaries))
+    if splits:
+        reason = "星と地上の相対移動方向が反転する候補を検出しました。"
+    else:
+        reason = "明確な移動方向反転は検出されませんでした。"
+    return GroupSuggestion(splits, groups, reason, analysis.confidence)

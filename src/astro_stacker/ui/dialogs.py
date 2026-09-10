@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -29,8 +30,11 @@ from ..project.project import Project
 from ..project.settings import (
     AlignmentMode,
     AlignmentStrategy,
+    BoundaryMode,
     FrameSelectionMode,
+    GroundSource,
     HDRStopAfter,
+    NightscapeOutput,
     ReferenceMode,
     StackingMethod,
 )
@@ -446,6 +450,20 @@ class HDRSettingsDialog(QDialog):
         self.stop_after.setCurrentIndex(
             self.stop_after.findData(project.settings.processing.hdr.stop_after)
         )
+        self.tone_mapping = QComboBox()
+        self.tone_mapping.addItem("Global", "global")
+        self.tone_mapping.addItem("Local", "local")
+        self.tone_mapping.addItem("Log", "log")
+        self.tone_mapping.setCurrentIndex(
+            max(0, self.tone_mapping.findData(project.settings.processing.hdr.tone_mapping))
+        )
+        self.local_scale = QDoubleSpinBox()
+        self.local_scale.setRange(0.5, 1024)
+        self.local_scale.setValue(project.settings.processing.hdr.local_scale)
+        self.detail_strength = QDoubleSpinBox()
+        self.detail_strength.setRange(0, 4)
+        self.detail_strength.setSingleStep(0.1)
+        self.detail_strength.setValue(project.settings.processing.hdr.detail_strength)
         self.format = QComboBox()
         for label, suffix in (("FITS", ".fits"), ("TIFF", ".tiff"), ("PNG", ".png"), ("JPEG", ".jpg")):
             self.format.addItem(label, suffix)
@@ -458,6 +476,9 @@ class HDRSettingsDialog(QDialog):
         layout.addRow(self.auto_group)
         layout.addRow("手動グループ", self.manual_groups)
         layout.addRow("実行範囲", self.stop_after)
+        layout.addRow("Tone Mapping", self.tone_mapping)
+        layout.addRow("Local scale", self.local_scale)
+        layout.addRow("Detail strength", self.detail_strength)
         layout.addRow("保存形式", self.format)
         layout.addRow("出力フォルダ", row)
         buttons = QDialogButtonBox(
@@ -490,6 +511,9 @@ class HDRSettingsDialog(QDialog):
                 for frame, label in zip(frames, labels, strict=True)
             }
         settings.stop_after = self.stop_after.currentData()
+        settings.tone_mapping = self.tone_mapping.currentData()
+        settings.local_scale = self.local_scale.value()
+        settings.detail_strength = self.detail_strength.value()
         super().accept()
 
     def selected(self):
@@ -554,6 +578,187 @@ class TimelapseSettingsDialog(QDialog):
 
     def selected(self):
         return Path(self.output.text()), self.format.currentData()
+
+
+class NightscapeSettingsDialog(QDialog):
+    def __init__(self, project: Project, default_folder: Path, parent=None, suggestion=None):
+        super().__init__(parent)
+        self.project = project
+        settings = project.settings.processing.nightscape
+        self.setWindowTitle("新星景")
+        layout = QFormLayout(self)
+        self.output_mode = QComboBox()
+        for label, value in (
+            ("星空素材だけ", NightscapeOutput.SKY_ONLY),
+            ("地上素材だけ", NightscapeOutput.GROUND_ONLY),
+            ("マスクだけ", NightscapeOutput.MASK_ONLY),
+            ("星空・地上・マスク素材", NightscapeOutput.MATERIALS),
+            ("最終合成まで", NightscapeOutput.FINAL),
+        ):
+            self.output_mode.addItem(label, value)
+        self.output_mode.setCurrentIndex(self.output_mode.findData(settings.output))
+        self.ground_source = QComboBox()
+        self.ground_source.addItem("星空と同じ画像から生成", GroundSource.SAME_FRAMES)
+        self.ground_source.addItem("別撮り画像を使用", GroundSource.SEPARATE_FRAMES)
+        self.ground_source.setCurrentIndex(self.ground_source.findData(settings.ground_source))
+        self.ground_paths = QLineEdit()
+        self.ground_paths.setReadOnly(True)
+        ground_browse = QPushButton("別撮り画像を選択")
+        ground_browse.clicked.connect(self._browse_ground)
+        ground_row = QHBoxLayout()
+        ground_row.addWidget(self.ground_paths)
+        ground_row.addWidget(ground_browse)
+        self.boundary = QComboBox()
+        self.boundary.addItem("地上を完全にマスク", BoundaryMode.GROUND_MASK)
+        self.boundary.addItem("光害フレームで滑らかに合成", BoundaryMode.LIGHT_POLLUTION)
+        self.boundary.addItem("ユーザー作成マスク", BoundaryMode.USER_MASK)
+        self.boundary.setCurrentIndex(self.boundary.findData(settings.boundary_mode))
+        self.user_mask_path = QLineEdit()
+        mask_browse = QPushButton("マスク選択")
+        mask_browse.clicked.connect(self._browse_mask)
+        mask_row = QHBoxLayout()
+        mask_row.addWidget(self.user_mask_path)
+        mask_row.addWidget(mask_browse)
+        self.star_alignment = QCheckBox("星空を恒星基準で処理")
+        self.star_alignment.setChecked(settings.star_alignment)
+        self.ground_alignment = QCheckBox("地上固定Alignment + Stack")
+        self.ground_alignment.setChecked(settings.ground_alignment)
+        self.star_protection = QCheckBox("地平線境界の星を保護")
+        self.star_protection.setChecked(settings.use_star_mask)
+        self.split_mode = QComboBox()
+        self.split_mode.addItem("分割なし", "none")
+        self.split_mode.addItem("反転候補から自動提案", "auto")
+        self.split_mode.addItem("手動分割", "manual")
+        self.split_mode.setCurrentIndex(max(0, self.split_mode.findData(settings.split_mode)))
+        self.split_index = QSpinBox()
+        self.split_index.setRange(0, max(0, len(project.light_frames) - 1))
+        self.split_index.setValue(settings.split_index)
+        self.suggestion = QLabel("自動分割候補: 解析結果なし")
+        self.suggestion.setWordWrap(True)
+        if suggestion is not None:
+            points = ", ".join(str(value) for value in suggestion.split_indices) or "なし"
+            self.suggestion.setText(
+                f"自動分割候補: {points} / 信頼度 {suggestion.confidence:.0%} / "
+                f"{suggestion.reason}。候補を採用せず手動分割へ変更できます。"
+            )
+            if suggestion.split_indices and settings.split_index == 0:
+                self.split_index.setValue(suggestion.split_indices[0])
+        self.feather = QDoubleSpinBox()
+        self.feather.setRange(0, 256)
+        self.feather.setValue(settings.feather)
+        self.blur_scale = QDoubleSpinBox()
+        self.blur_scale.setRange(0.1, 1024)
+        self.blur_scale.setValue(settings.blur_scale)
+        self.transition_width = QDoubleSpinBox()
+        self.transition_width.setRange(0.1, 1024)
+        self.transition_width.setValue(settings.transition_width)
+        self.background_strength = QDoubleSpinBox()
+        self.background_strength.setRange(0, 4)
+        self.background_strength.setSingleStep(0.05)
+        self.background_strength.setValue(settings.background_strength)
+        self.format = QComboBox()
+        for label, suffix in (("FITS", ".fits"), ("TIFF", ".tiff"), ("PNG", ".png"), ("JPEG", ".jpg")):
+            self.format.addItem(label, suffix)
+        self.output = QLineEdit(str(default_folder / "nightscape"))
+        output_browse = QPushButton("参照")
+        output_browse.clicked.connect(self._browse_output)
+        output_row = QHBoxLayout()
+        output_row.addWidget(self.output)
+        output_row.addWidget(output_browse)
+        layout.addRow("作成内容", self.output_mode)
+        layout.addRow("地上画像", self.ground_source)
+        layout.addRow("別撮り地上", ground_row)
+        layout.addRow("境界処理", self.boundary)
+        layout.addRow("ユーザーマスク", mask_row)
+        layout.addRow(self.star_alignment)
+        layout.addRow(self.ground_alignment)
+        layout.addRow(self.star_protection)
+        layout.addRow("時間グループ", self.split_mode)
+        layout.addRow(self.suggestion)
+        layout.addRow("手動分割位置", self.split_index)
+        layout.addRow("Feather", self.feather)
+        layout.addRow("光害 Blur scale", self.blur_scale)
+        layout.addRow("境界 Transition width", self.transition_width)
+        layout.addRow("背景強度", self.background_strength)
+        layout.addRow("保存形式", self.format)
+        layout.addRow("出力フォルダ", output_row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse_ground(self):
+        paths, _ = QFileDialog.getOpenFileNames(self, "別撮り地上画像")
+        if paths:
+            self.ground_paths.setText(";".join(paths))
+
+    def _browse_mask(self):
+        path, _ = QFileDialog.getOpenFileName(self, "ユーザー作成マスク")
+        if path:
+            self.user_mask_path.setText(path)
+
+    def _browse_output(self):
+        path = QFileDialog.getExistingDirectory(self, "新星景出力", self.output.text())
+        if path:
+            self.output.setText(path)
+
+    def accept(self):
+        settings = self.project.settings.processing.nightscape
+        settings.output = self.output_mode.currentData()
+        settings.ground_source = self.ground_source.currentData()
+        settings.boundary_mode = self.boundary.currentData()
+        settings.star_alignment = self.star_alignment.isChecked()
+        settings.ground_alignment = self.ground_alignment.isChecked()
+        settings.use_star_mask = self.star_protection.isChecked()
+        settings.split_mode = self.split_mode.currentData()
+        settings.split_index = self.split_index.value()
+        settings.feather = self.feather.value()
+        settings.blur_scale = self.blur_scale.value()
+        settings.transition_width = self.transition_width.value()
+        settings.background_strength = self.background_strength.value()
+        if settings.ground_source == GroundSource.SEPARATE_FRAMES and not self.ground_paths.text():
+            QMessageBox.warning(self, "新星景", "別撮り地上画像を選択してください。")
+            return
+        if settings.boundary_mode == BoundaryMode.USER_MASK and not self.user_mask_path.text():
+            QMessageBox.warning(self, "新星景", "ユーザー作成マスクを選択してください。")
+            return
+        super().accept()
+
+    def selected(self):
+        ground = [Path(value) for value in self.ground_paths.text().split(";") if value]
+        mask = Path(self.user_mask_path.text()) if self.user_mask_path.text() else None
+        return Path(self.output.text()), self.format.currentData(), ground, mask
+
+
+class ParallelSettingsDialog(QDialog):
+    def __init__(self, project: Project, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("並列処理")
+        layout = QFormLayout(self)
+        self.workers = QSpinBox()
+        self.workers.setRange(0, 256)
+        self.workers.setSpecialValueText("自動（CPU・空きメモリから決定）")
+        self.workers.setValue(project.settings.processing.parallel_workers)
+        layout.addRow("最大ワーカー数", self.workers)
+        note = QLabel(
+            "0では処理ごとにCPU数と空きメモリから安全な並列度を決定します。"
+            "結果順序は入力順に固定され、メモリ不足時は逐次処理へ縮退します。"
+        )
+        note.setWordWrap(True)
+        layout.addRow(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def accept(self):
+        self.project.settings.processing.parallel_workers = self.workers.value()
+        super().accept()
 
 
 class ErrorDialog(QMessageBox):

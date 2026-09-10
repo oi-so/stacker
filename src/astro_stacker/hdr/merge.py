@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
 from ..io.image_data import AstroImage
@@ -133,16 +134,52 @@ def merge_hdr(
     return hdr, (weight_sum > 0).astype(np.float32)
 
 
-def tone_map(image: np.ndarray, method: str = "global", strength: float = 1.0) -> np.ndarray:
-    """Tone-map without modifying the linear HDR input."""
-    data = np.maximum(np.asarray(image, dtype=np.float32), 0)
-    finite = data[np.isfinite(data)]
-    scale = float(np.percentile(finite, 99)) if finite.size else 1.0
-    normalized = data / max(scale, 1e-8)
+def tone_map(
+    image: np.ndarray,
+    method: str = "global",
+    strength: float = 1.0,
+    *,
+    local_scale: float = 32.0,
+    detail_strength: float = 1.0,
+) -> np.ndarray:
+    """Tone-map linear HDR data while preserving RGB chromaticity."""
+    data = np.clip(np.asarray(image, dtype=np.float32), 0.0, None)
+    luminance = np.mean(data, axis=-1) if data.ndim == 3 else data
+    finite = luminance[np.isfinite(luminance)]
+    if not finite.size:
+        return np.zeros_like(data)
+    scale = max(float(np.percentile(finite, 99)), 1e-8)
+    normalized = luminance / scale
     if method == "global":
-        mapped = normalized / (1.0 + max(1e-6, strength) * normalized)
+        mapped_luminance = normalized / (
+            1.0 + max(1e-6, strength) * normalized
+        )
     elif method == "log":
-        mapped = np.log1p(max(1e-6, strength) * normalized) / np.log1p(max(1e-6, strength))
+        mapped_luminance = np.log1p(max(1e-6, strength) * normalized) / np.log1p(
+            max(1e-6, strength)
+        )
+    elif method == "local":
+        log_luminance = np.log1p(normalized)
+        base = cv2.GaussianBlur(
+            log_luminance,
+            (0, 0),
+            max(0.5, float(local_scale)),
+            borderType=cv2.BORDER_REFLECT,
+        )
+        detail = log_luminance - base
+        dynamic_range = float(np.percentile(base, 99.5) - np.percentile(base, 0.5))
+        compressed = base / max(1.0, dynamic_range * max(0.1, float(strength)))
+        mapped_luminance = np.expm1(
+            compressed + detail * max(0.0, float(detail_strength))
+        )
+        mapped_values = mapped_luminance[np.isfinite(mapped_luminance)]
+        if mapped_values.size:
+            mapped_luminance /= float(np.percentile(mapped_values, 99.5)) + 1e-8
     else:
         raise ValueError(f"Unknown tone mapping method: {method}")
+    if data.ndim == 3:
+        ratio = mapped_luminance / np.maximum(normalized, 1e-8)
+        mapped = data / scale * ratio[..., None]
+    else:
+        mapped = mapped_luminance
     return np.clip(mapped, 0.0, 1.0).astype(np.float32)

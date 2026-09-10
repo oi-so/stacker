@@ -2,9 +2,10 @@ from pathlib import Path
 
 import numpy as np
 import pytest
+from astropy.io import fits
 
 from astro_stacker.alignment.transform import ImageTransformer
-from astro_stacker.analysis import analyze_motion
+from astro_stacker.analysis import analyze_motion, suggest_time_groups
 from astro_stacker.calibration.bad_pixels import correct_bad_pixels, detect_bad_pixels
 from astro_stacker.grouping import make_windows
 from astro_stacker.hdr import group_by_exposure, merge_hdr, tone_map
@@ -19,7 +20,14 @@ from astro_stacker.io.image_data import (
 from astro_stacker.masks import ArrayMaskProvider, compose_masks, generate_star_mask
 from astro_stacker.nightscape import composite_nightscape, light_pollution_frame
 from astro_stacker.normalization import normalize_image
-from astro_stacker.project.settings import StarMaskSettings
+from astro_stacker.pipeline.extended_pipeline import TimelapseStackPipeline
+from astro_stacker.pipeline.nightscape_pipeline import NightscapePipeline
+from astro_stacker.project.settings import (
+    NightscapeSettings,
+    StackingSettings,
+    StarMaskSettings,
+    TimelapseSettings,
+)
 from astro_stacker.stacking.combiner import ImageCombiner
 from astro_stacker.stars.star_data import Star, StarCatalog
 
@@ -113,6 +121,10 @@ def test_hdr_grouping_merge_and_tone_mapping():
     assert np.all(valid == 1)
     mapped = tone_map(hdr)
     assert mapped.min() >= 0 and mapped.max() <= 1
+    rgb = np.stack([hdr, hdr * 0.5, hdr * 0.25], axis=-1)
+    local = tone_map(rgb, "local", local_scale=2, detail_strength=1.2)
+    assert local.shape == rgb.shape
+    assert np.isfinite(local).all()
 
 
 def test_timelapse_windows_keep_or_drop_partial():
@@ -144,6 +156,8 @@ def test_motion_analysis_reports_reversal_candidate():
     assert result.star_motion
     assert result.reversal_candidates == (3,)
     assert result.recommendation == "star_alignment"
+    suggestion = suggest_time_groups(result, len(frames))
+    assert suggestion.groups == ((0, 3), (3, 5))
 
 
 def test_nightscape_composite_preserves_stars_at_boundary():
@@ -159,3 +173,48 @@ def test_nightscape_composite_preserves_stars_at_boundary():
     assert result[10, 10] == 10
     pollution = light_pollution_frame(sky, stars, blur_scale=2)
     assert pollution.shape == sky.shape
+
+
+def test_nightscape_pipeline_can_finish_composite():
+    frames = [frame(0), frame(1)]
+    arrays = np.stack(
+        [np.full((4, 5), 4, dtype=np.float32), np.full((4, 5), 6, dtype=np.float32)]
+    )
+    settings = NightscapeSettings(star_alignment=False)
+    sky_mask = np.ones((4, 5), dtype=np.float32)
+    sky_mask[2:] = 0
+    result = NightscapePipeline(Provider(arrays)).run(
+        frames,
+        frames,
+        StackingSettings(),
+        settings,
+        sky_mask,
+    )
+    assert {"merged_sky", "ground_stack", "ground_mask", "final_composite"} <= set(
+        result.products
+    )
+    np.testing.assert_allclose(result.products["final_composite"][:2], 5)
+
+
+def test_parallel_timelapse_is_bounded_and_keeps_output_order(tmp_path, monkeypatch):
+    frames = [frame(index) for index in range(6)]
+    arrays = np.stack(
+        [np.full((4, 5), index, dtype=np.float32) for index in range(6)]
+    )
+    monkeypatch.setattr(
+        "astro_stacker.pipeline.extended_pipeline.bounded_workers", lambda *args, **kwargs: 2
+    )
+    result = TimelapseStackPipeline(Provider(arrays)).run(
+        frames,
+        StackingSettings(),
+        TimelapseSettings(window_size=2, step=2),
+        tmp_path,
+        requested_workers=2,
+    )
+    assert [path.name for path in result.paths] == [
+        "stack_000001.fits",
+        "stack_000002.fits",
+        "stack_000003.fits",
+    ]
+    values = [float(np.mean(fits.getdata(path))) for path in result.paths]
+    np.testing.assert_allclose(values, [0.5, 2.5, 4.5])

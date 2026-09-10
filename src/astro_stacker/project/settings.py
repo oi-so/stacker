@@ -83,6 +83,8 @@ class HDRSettings:
     black_level: float | None = None
     white_level: float | None = None
     tone_mapping: str = "global"
+    local_scale: float = 32.0
+    detail_strength: float = 1.0
 
 
 class AlignmentStrategy(StrEnum):
@@ -101,6 +103,41 @@ class TimelapseSettings:
     alignment: AlignmentStrategy = AlignmentStrategy.NONE
 
 
+class NightscapeOutput(StrEnum):
+    SKY_ONLY = "sky_only"
+    GROUND_ONLY = "ground_only"
+    MASK_ONLY = "mask_only"
+    MATERIALS = "materials"
+    FINAL = "final"
+
+
+class BoundaryMode(StrEnum):
+    GROUND_MASK = "ground_mask"
+    LIGHT_POLLUTION = "light_pollution"
+    USER_MASK = "user_mask"
+
+
+class GroundSource(StrEnum):
+    SAME_FRAMES = "same_frames"
+    SEPARATE_FRAMES = "separate_frames"
+
+
+@dataclass
+class NightscapeSettings:
+    output: NightscapeOutput = NightscapeOutput.FINAL
+    boundary_mode: BoundaryMode = BoundaryMode.GROUND_MASK
+    ground_source: GroundSource = GroundSource.SAME_FRAMES
+    star_alignment: bool = True
+    ground_alignment: bool = False
+    use_star_mask: bool = True
+    split_mode: str = "none"
+    split_index: int = 0
+    feather: float = 4.0
+    blur_scale: float = 32.0
+    transition_width: float = 16.0
+    background_strength: float = 0.25
+
+
 @dataclass
 class ExportSettings:
     suffix: str = ".fits"
@@ -116,6 +153,8 @@ class ProcessingOptions:
     star_mask: StarMaskSettings = field(default_factory=StarMaskSettings)
     hdr: HDRSettings = field(default_factory=HDRSettings)
     timelapse: TimelapseSettings = field(default_factory=TimelapseSettings)
+    nightscape: NightscapeSettings = field(default_factory=NightscapeSettings)
+    parallel_workers: int = 0
 
 
 class AlignmentMode(StrEnum):
