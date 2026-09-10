@@ -34,7 +34,12 @@ class HorizonsEphemeris:
             for start in range(0, len(epochs), 50):
                 query = self._query_factory(
                     id=identifier,
-                    id_type=None if target.spk_id else "smallbody",
+                    # SBDB's ``spkid`` is not always valid as Horizons' raw
+                    # integer record number.  In particular, comet SPK IDs
+                    # such as 1000094 must be sent as ``DES=1000094;``.
+                    # astroquery emits that unambiguous command for the
+                    # designation id type.
+                    id_type="designation",
                     location=observer_code.strip() or "500",
                     epochs=epochs[start : start + 50],
                 )
