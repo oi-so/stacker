@@ -21,11 +21,11 @@ def _recording_factory(received: dict):
     return factory
 
 
-def test_spk_id_is_sent_as_horizons_designation() -> None:
+def test_comet_uses_primary_designation_and_closest_apparition() -> None:
     received = {}
     target = CatalogObject(
-        designation="94P",
-        fullname="94P/Russell 4",
+        designation="10P",
+        fullname="10P/Tempel 2",
         spk_id="1000094",
         kind="cn",
     )
@@ -36,8 +36,9 @@ def test_spk_id_is_sent_as_horizons_designation() -> None:
     )
 
     assert positions == [SkyPosition(42.5, -7.25)]
-    assert received["id"] == "1000094"
+    assert received["id"] == "10P"
     assert received["id_type"] == "designation"
+    assert received["ephemerides"]["closest_apparition"] is True
 
 
 def test_primary_designation_uses_same_unambiguous_horizons_syntax() -> None:
@@ -56,3 +57,22 @@ def test_primary_designation_uses_same_unambiguous_horizons_syntax() -> None:
     assert received["id"] == "C/2025 A1"
     assert received["id_type"] == "designation"
     assert received["location"] == "568"
+    assert received["ephemerides"]["closest_apparition"] is True
+
+
+def test_asteroid_does_not_request_a_comet_apparition() -> None:
+    received = {}
+    target = CatalogObject(
+        designation="433",
+        fullname="433 Eros",
+        spk_id="2000433",
+        kind="an",
+    )
+
+    HorizonsEphemeris(_recording_factory(received)).positions(
+        target,
+        [datetime(2026, 9, 10, tzinfo=UTC)],
+    )
+
+    assert received["id"] == "433"
+    assert received["ephemerides"]["closest_apparition"] is False
