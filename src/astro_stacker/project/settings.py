@@ -53,10 +53,21 @@ class CosmeticCorrectionSettings:
     light_persistence: float = 0.7
 
 
+class ObstacleMode(StrEnum):
+    NONE = "none"
+    FIXED = "fixed"
+    TRACKED = "tracked"
+
+
 @dataclass
 class ArtifactMaskSettings:
     enabled: bool = False
+    mode: ObstacleMode = ObstacleMode.FIXED
     mask_paths: dict[Path, Path] = field(default_factory=dict)
+    reference_mask_path: Path | None = None
+    reference_frame_path: Path | None = None
+    auto_detect_new: bool = False
+    confidence_threshold: float = 0.6
     line_width: float = 8.0
     feather: float = 3.0
 

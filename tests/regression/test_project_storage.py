@@ -22,7 +22,7 @@ from astro_stacker.platesolve.solver import (
     PlateSolveSettings,
 )
 from astro_stacker.project.project import Project
-from astro_stacker.project.settings import StackingMethod
+from astro_stacker.project.settings import ObstacleMode, StackingMethod
 from astro_stacker.project.storage import load_project, save_project
 
 
@@ -73,6 +73,11 @@ def test_project_roundtrip_and_relocation(tmp_path):
     project.settings.processing.cosmetic_correction.enabled = True
     project.settings.processing.cosmetic_correction.bad_pixel_map_path = bad_pixel_map
     project.settings.processing.artifact_masks.enabled = True
+    project.settings.processing.artifact_masks.mode = ObstacleMode.TRACKED
+    project.settings.processing.artifact_masks.reference_mask_path = artifact_mask
+    project.settings.processing.artifact_masks.reference_frame_path = project.light_frames[0].info.path
+    project.settings.processing.artifact_masks.auto_detect_new = True
+    project.settings.processing.artifact_masks.confidence_threshold = 0.75
     project.settings.processing.artifact_masks.mask_paths[
         project.light_frames[0].info.path
     ] = artifact_mask
@@ -112,6 +117,11 @@ def test_project_roundtrip_and_relocation(tmp_path):
     assert restored.settings.processing.artifact_masks.mask_paths[
         moved / "0.fits"
     ] == moved / "wire-mask.fits"
+    assert restored.settings.processing.artifact_masks.mode is ObstacleMode.TRACKED
+    assert restored.settings.processing.artifact_masks.reference_mask_path == moved / "wire-mask.fits"
+    assert restored.settings.processing.artifact_masks.reference_frame_path == moved / "0.fits"
+    assert restored.settings.processing.artifact_masks.auto_detect_new
+    assert restored.settings.processing.artifact_masks.confidence_threshold == 0.75
     assert restored.settings.processing.drizzle.enabled
     assert restored.notes == "撮影条件のメモ"
     assert restored.settings.moving_object.anchors[0].frame_path == moved / "0.fits"

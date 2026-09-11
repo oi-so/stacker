@@ -16,10 +16,11 @@ from ..io.image_manager import ImageManager
 from ..io.loader import load_info
 from ..io.saver import save_fits
 from ..masks.weights import FileMaskProvider
+from ..obstacles import TrackedObstacleMaskProvider
 from ..pipeline.alignment_pipeline import AlignmentPipeline
 from ..pipeline.stacking_pipeline import StackingPipeline
 from ..project.project import Project
-from ..project.settings import DebayerTiming, StackingMethod
+from ..project.settings import DebayerTiming, ObstacleMode, StackingMethod
 
 logger = logging.getLogger(__name__)
 
@@ -304,18 +305,32 @@ class ProcessingPipeline:
             stack_provider = DebayerFrameProvider(stack_provider)
 
         source_masks = None
+        aligned_obstacle_masks = None
         artifact_settings = project.settings.processing.artifact_masks
         if artifact_settings.enabled:
-            if not artifact_settings.mask_paths:
-                raise ValueError("電線・障害物除去が有効ですが、マスクが登録されていません。")
-
             def load_mask(path: Path) -> np.ndarray:
                 return self.manager.get_image(load_info(path))
 
-            source_masks = FileMaskProvider(artifact_settings.mask_paths, load_mask)
+            if artifact_settings.mode == ObstacleMode.TRACKED:
+                if artifact_settings.reference_mask_path is None:
+                    raise ValueError("追尾障害物処理には基準画像のマスクが必要です。")
+                aligned_obstacle_masks = TrackedObstacleMaskProvider(
+                    load_mask(artifact_settings.reference_mask_path) > 0.5
+                )
+                # Per-frame user-approved additions coexist with the tracked
+                # reference mask.  They are source-grid masks and follow the
+                # normal image-alignment path below.
+                if artifact_settings.mask_paths:
+                    source_masks = FileMaskProvider(artifact_settings.mask_paths, load_mask)
+            else:
+                if not artifact_settings.mask_paths:
+                    raise ValueError("電線・障害物除去が有効ですが、マスクが登録されていません。")
+                source_masks = FileMaskProvider(artifact_settings.mask_paths, load_mask)
 
         logger.info("Starting stacking")
-        stacking_pipeline = StackingPipeline(stack_provider, source_masks)
+        stacking_pipeline = StackingPipeline(
+            stack_provider, source_masks, aligned_obstacle_masks
+        )
         stacking_pipeline.run(
             project,
             project.settings.light_frame,

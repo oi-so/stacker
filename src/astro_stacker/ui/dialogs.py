@@ -38,6 +38,7 @@ from ..project.settings import (
     GroundSource,
     HDRStopAfter,
     NightscapeOutput,
+    ObstacleMode,
     ReferenceMode,
     StackingMethod,
 )
@@ -393,6 +394,8 @@ class StackingSettingsDialog(QDialog):
 
         artifacts = project.settings.processing.artifact_masks
         self._pending_artifact_paths = dict(artifacts.mask_paths)
+        self._pending_reference_mask_path = artifacts.reference_mask_path
+        self._pending_reference_frame_path = artifacts.reference_frame_path
         self._pending_artifact_line_width = artifacts.line_width
         self._pending_artifact_feather = artifacts.feather
         artifact_box = QGroupBox("電線・電柱・局所障害物")
@@ -401,6 +404,18 @@ class StackingSettingsDialog(QDialog):
             f"スタック時に登録済みマスクを使用（{len(artifacts.mask_paths)}フレーム）"
         )
         self.artifact_masks_enabled.setChecked(artifacts.enabled)
+        self.obstacle_mode = QComboBox()
+        self.obstacle_mode.addItem("固定撮影（フレーム別マスク）", ObstacleMode.FIXED)
+        self.obstacle_mode.addItem("追尾撮影（基準マスクを追従）", ObstacleMode.TRACKED)
+        self.obstacle_mode.setCurrentIndex(
+            max(0, self.obstacle_mode.findData(artifacts.mode))
+        )
+        self.obstacle_auto_detect = QCheckBox("未登録の新規障害物候補を検出（確認後に適用）")
+        self.obstacle_auto_detect.setChecked(artifacts.auto_detect_new)
+        self.obstacle_confidence = QDoubleSpinBox()
+        self.obstacle_confidence.setRange(0.3, 1.0)
+        self.obstacle_confidence.setSingleStep(0.05)
+        self.obstacle_confidence.setValue(artifacts.confidence_threshold)
         artifact_note = QLabel(
             "対象Lightを選び、電線や電柱の中心線を幅付きで指定します。"
             "マスク部分はそのフレームのスタック寄与から除外されます。"
@@ -419,6 +434,9 @@ class StackingSettingsDialog(QDialog):
         artifact_buttons.addWidget(create_artifact)
         artifact_buttons.addWidget(remove_artifact)
         artifact_layout.addRow(self.artifact_masks_enabled)
+        artifact_layout.addRow("撮影モード", self.obstacle_mode)
+        artifact_layout.addRow(self.obstacle_auto_detect)
+        artifact_layout.addRow("候補信頼度", self.obstacle_confidence)
         artifact_layout.addRow(artifact_note)
         artifact_layout.addRow("対象Light", self.artifact_frame)
         artifact_layout.addRow(artifact_buttons)
@@ -483,13 +501,24 @@ class StackingSettingsDialog(QDialog):
         except Exception as exc:
             QMessageBox.warning(self, "マスク保存", f"マスクを保存できませんでした: {exc}")
             return
+        tracked_base = self.obstacle_mode.currentData() == ObstacleMode.TRACKED
         targets = (
-            [candidate for candidate in self.project.light_frames if candidate.info.enabled]
-            if editor.apply_to_all.isChecked()
-            else [frame]
+            []
+            if tracked_base
+            else (
+                [candidate for candidate in self.project.light_frames if candidate.info.enabled]
+                if editor.apply_to_all.isChecked()
+                else [frame]
+            )
         )
         for target in targets:
             self._pending_artifact_paths[target.info.path] = path
+        if tracked_base:
+            # The selected Light is the coordinate system in which the user
+            # drew this base mask.  Its mask is transformed for every frame
+            # during stacking; later per-frame edits remain separate.
+            self._pending_reference_mask_path = path
+            self._pending_reference_frame_path = frame.info.path
         self._pending_artifact_line_width = editor.width.value()
         self._pending_artifact_feather = editor.feather.value()
         self.artifact_masks_enabled.setChecked(True)
@@ -533,7 +562,15 @@ class StackingSettingsDialog(QDialog):
             )
             return
         artifacts = self.project.settings.processing.artifact_masks
-        if self.artifact_masks_enabled.isChecked() and not self._pending_artifact_paths:
+        tracked = self.obstacle_mode.currentData() == ObstacleMode.TRACKED
+        if (
+            self.artifact_masks_enabled.isChecked()
+            and not self._pending_artifact_paths
+            and not (
+                tracked
+                and self._pending_reference_mask_path
+            )
+        ):
             QMessageBox.warning(
                 self, "電線・電柱・障害物除去", "先にフレームごとの障害物マスクを作成してください。"
             )
@@ -579,6 +616,11 @@ class StackingSettingsDialog(QDialog):
         cosmetic.light_sigma = self.bad_pixel_sigma.value()
         cosmetic.light_persistence = self.bad_pixel_persistence.value()
         artifacts.mask_paths = self._pending_artifact_paths
+        artifacts.reference_mask_path = self._pending_reference_mask_path
+        artifacts.reference_frame_path = self._pending_reference_frame_path
+        artifacts.mode = self.obstacle_mode.currentData()
+        artifacts.auto_detect_new = self.obstacle_auto_detect.isChecked()
+        artifacts.confidence_threshold = self.obstacle_confidence.value()
         artifacts.line_width = self._pending_artifact_line_width
         artifacts.feather = self._pending_artifact_feather
         artifacts.enabled = self.artifact_masks_enabled.isChecked()

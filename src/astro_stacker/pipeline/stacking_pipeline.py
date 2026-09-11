@@ -23,9 +23,11 @@ class StackingPipeline:
         self,
         provider: FrameProvider,
         source_mask_provider: WeightMaskProvider | None = None,
+        aligned_mask_provider: WeightMaskProvider | None = None,
     ):
         self.provider = provider
         self.source_mask_provider = source_mask_provider
+        self.aligned_mask_provider = aligned_mask_provider
 
     def run(
         self,
@@ -139,6 +141,10 @@ class StackingPipeline:
                 if project.settings.use_alignment and not drizzle.enabled
                 else self.source_mask_provider
             )
+        if self.aligned_mask_provider is not None:
+            # This provider already returns masks in the aligned output grid.
+            # Applying AlignedMaskProvider here would transform it twice.
+            mask_providers.append(self.aligned_mask_provider)
         masks = CompositeMaskProvider(mask_providers) if mask_providers else None
         weights = quality_weights(frames) if settings.use_quality_weights else None
 
@@ -181,7 +187,10 @@ class StackingPipeline:
             # adjacent stacked sky; never modify pixels supported by a frame.
             if (
                 result is not None
-                and self.source_mask_provider is not None
+                and (
+                    self.source_mask_provider is not None
+                    or self.aligned_mask_provider is not None
+                )
                 and combiner.last_valid_mask is not None
             ):
                 result = inpaint_masked_pixels(result, combiner.last_valid_mask <= 0)

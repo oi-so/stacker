@@ -34,6 +34,7 @@ from astro_stacker.masks import (
 )
 from astro_stacker.nightscape import composite_nightscape, light_pollution_frame
 from astro_stacker.normalization import normalize_image
+from astro_stacker.obstacles import ObstacleDetector, TrackedObstacleMaskProvider, transform_mask
 from astro_stacker.pipeline.extended_pipeline import TimelapseStackPipeline
 from astro_stacker.pipeline.nightscape_pipeline import NightscapePipeline
 from astro_stacker.pipeline.stacking_pipeline import StackingPipeline
@@ -270,6 +271,41 @@ def test_inpaint_masked_pixels_repairs_only_the_no_sample_hole():
     np.testing.assert_allclose(repaired[:3], 7.0)
     np.testing.assert_allclose(repaired[6:], 7.0)
     assert np.all(repaired[3:6] > 0)
+
+
+def test_tracked_obstacle_mask_uses_nearest_neighbour_for_full_transform():
+    source = np.zeros((9, 9), dtype=bool)
+    source[2, 2] = True
+    transform = TransformData(
+        matrix=np.array([[0.0, -1.0, 8.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+    )
+    tracked = transform_mask(source, transform)
+
+    assert tracked.dtype == bool
+    assert tracked.sum() == 1
+    assert tracked[2, 6]
+
+    item = frame(0)
+    item.info.transform = transform
+    weights = TrackedObstacleMaskProvider(source).get_mask(item, source.shape)
+    assert weights[2, 6] == 0
+    assert weights[2, 2] == 1
+
+
+def test_obstacle_detector_reports_large_single_frame_change_not_stars():
+    base = np.zeros((32, 32), dtype=np.float32)
+    base[4, 4] = 20  # a point-like star must not become an obstacle candidate
+    changed = base.copy()
+    changed[14:24, 2:28] = 50
+
+    candidates = ObstacleDetector(confidence_threshold=0.6, minimum_area=32).detect(
+        changed, aligned_images=[base, base, base]
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0].source.value == "auto"
+    assert candidates[0].mask[18, 14]
+    assert not candidates[0].mask[4, 4]
 
 
 @pytest.mark.parametrize(
