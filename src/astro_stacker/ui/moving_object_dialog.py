@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QObject, QSettings, Qt, QThread, Signal, Slot

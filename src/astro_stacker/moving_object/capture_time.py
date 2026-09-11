@@ -13,7 +13,7 @@ _EXIF_FORMATS = (
 )
 
 
-def _parse_capture_time(value: object) -> datetime | None:
+def _parse_capture_time(value: object, offset: object | None = None) -> datetime | None:
     if value is None:
         return None
 
@@ -29,7 +29,7 @@ def _parse_capture_time(value: object) -> datetime | None:
     if parsed is None:
         for date_format in _EXIF_FORMATS:
             try:
-                parsed = datetime.strptime(text, date_format).replace(tzinfo=UTC)
+                parsed = datetime.strptime(text, date_format)
                 break
             except ValueError:
                 continue
@@ -37,23 +37,40 @@ def _parse_capture_time(value: object) -> datetime | None:
     if parsed is None:
         return None
 
-    # DATE-OBS is normally UTC. Most camera EXIF timestamps have no timezone,
-    # but relative intervals remain correct when all frames use the same clock.
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        if offset is not None:
+            try:
+                offset_text = str(offset).strip()
+                if offset_text:
+                    parsed = parsed.replace(
+                        tzinfo=datetime.strptime(offset_text, "%z").tzinfo
+                    )
+            except ValueError:
+                pass
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+
     return parsed.astimezone(UTC)
 
 
 def capture_midpoint(frame: AstroImage) -> datetime | None:
     """Return the exposure midpoint, or None when no capture time is available."""
-
     metadata = frame.info.exif or {}
-    value = frame.info.capture_time_override_utc or (
-        metadata.get("DATE-OBS")
-        or metadata.get("EXIF DateTimeOriginal")
-        or metadata.get("Image DateTime")
-    )
-    start = _parse_capture_time(value)
+
+    override = frame.info.capture_time_override_utc
+    if override:
+        start = _parse_capture_time(override)
+    else:
+        date_value = (
+            metadata.get("DATE-OBS")
+            or metadata.get("EXIF DateTimeOriginal")
+            or metadata.get("Image DateTime")
+        )
+        offset_value = metadata.get("EXIF OffsetTimeOriginal")
+
+        start = _parse_capture_time(date_value, offset_value)
+
     if start is None:
         return None
 
