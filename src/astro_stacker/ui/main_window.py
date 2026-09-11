@@ -157,7 +157,7 @@ class MainWindow(QMainWindow):
         center_splitter = QSplitter(Qt.Orientation.Horizontal)
         # The platform default can be only a few pixels wide, making a panel
         # resize unnecessarily difficult.  Keep a generous, visible grab area.
-        center_splitter.setHandleWidth(14)
+        center_splitter.setHandleWidth(5)
         center_splitter.setChildrenCollapsible(False)
         center_splitter.setStyleSheet(
             "QSplitter::handle { background: palette(mid); }"
@@ -169,7 +169,7 @@ class MainWindow(QMainWindow):
         center_splitter.setStretchFactor(1, 1)
 
         main_splitter = QSplitter(Qt.Orientation.Vertical)
-        main_splitter.setHandleWidth(14)
+        main_splitter.setHandleWidth(5)
         main_splitter.setChildrenCollapsible(False)
         main_splitter.setStyleSheet(
             "QSplitter::handle { background: palette(mid); }"
