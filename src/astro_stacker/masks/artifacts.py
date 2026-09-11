@@ -11,6 +11,33 @@ Point = tuple[float, float]
 Polyline = list[Point]
 
 
+def inpaint_masked_pixels(image: np.ndarray, missing: np.ndarray, *, radius: float = 3.0) -> np.ndarray:
+    """Fill pixels for which every input frame was deliberately masked.
+
+    A weight mask normally lets the stack use another frame at an obstruction.
+    When an obstruction overlaps in every aligned frame, however, the weighted
+    stack has no sample at all and used to leave a black stripe.  Inpaint only
+    those no-sample pixels; all measured stack pixels are retained unchanged.
+    """
+    data = np.asarray(image, dtype=np.float32)
+    holes = np.asarray(missing, dtype=bool)
+    if data.ndim not in (2, 3) or holes.shape != data.shape[:2]:
+        raise ValueError("Inpainting mask shape must match the image grid")
+    if not np.any(holes):
+        return data
+
+    mask = holes.astype(np.uint8) * 255
+    result = data.copy()
+    if data.ndim == 2:
+        return cv2.inpaint(result, mask, radius, cv2.INPAINT_TELEA)
+    for channel in range(data.shape[-1]):
+        # OpenCV accepts float32 inpainting for one channel at a time.
+        result[..., channel] = cv2.inpaint(
+            result[..., channel], mask, radius, cv2.INPAINT_TELEA
+        )
+    return result
+
+
 def _blocked_to_weight(blocked: np.ndarray, feather: float) -> np.ndarray:
     if not np.any(blocked):
         return np.ones(blocked.shape, dtype=np.float32)

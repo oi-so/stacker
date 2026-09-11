@@ -28,6 +28,7 @@ from astro_stacker.masks import (
     compose_masks,
     detect_line_candidates,
     generate_star_mask,
+    inpaint_masked_pixels,
     polygon_weight_mask,
     polyline_weight_mask,
 )
@@ -256,6 +257,19 @@ def test_polygon_mask_removes_area_without_connecting_separate_lines():
     )
     assert mask[10, 10] == 0
     assert mask[2, 2] == 1
+
+
+def test_inpaint_masked_pixels_repairs_only_the_no_sample_hole():
+    image = np.full((9, 9), 7.0, dtype=np.float32)
+    image[3:6, :] = 0.0
+    missing = np.zeros((9, 9), dtype=bool)
+    missing[3:6, :] = True
+
+    repaired = inpaint_masked_pixels(image, missing)
+
+    np.testing.assert_allclose(repaired[:3], 7.0)
+    np.testing.assert_allclose(repaired[6:], 7.0)
+    assert np.all(repaired[3:6] > 0)
 
 
 @pytest.mark.parametrize(

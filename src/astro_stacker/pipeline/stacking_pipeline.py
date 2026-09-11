@@ -2,6 +2,7 @@ from ..alignment.transform import AlignedFrameProvider, ImageTransformer
 from ..analysis.quality import quality_weights, select_frames
 from ..core.frame_provider import FrameProvider
 from ..drizzle import DrizzleCombiner
+from ..masks.artifacts import inpaint_masked_pixels
 from ..masks.weights import (
     AlignedMaskProvider,
     AlignmentValidityMaskProvider,
@@ -172,6 +173,18 @@ class StackingPipeline:
                     frame_weights=weights,
                     requested_workers=requested_workers,
                 )
+
+            # An artifact mask intentionally contributes no data.  If every
+            # aligned frame excludes the same location, ImageCombiner marks it
+            # invalid and fills it with zero, which is displayed as a black
+            # wire/pole-shaped hole.  Repair only those no-sample pixels using
+            # adjacent stacked sky; never modify pixels supported by a frame.
+            if (
+                result is not None
+                and self.source_mask_provider is not None
+                and combiner.last_valid_mask is not None
+            ):
+                result = inpaint_masked_pixels(result, combiner.last_valid_mask <= 0)
 
             project.result.stacked_image = result
             from ..metadata.stacked import stack_metadata

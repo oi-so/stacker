@@ -155,12 +155,26 @@ class MainWindow(QMainWindow):
         self.log_panel.append_log(logging.INFO, f"Started at: {datetime.now().strftime('%Y/%m/%d %H:%M:%S')}")
 
         center_splitter = QSplitter(Qt.Orientation.Horizontal)
+        # The platform default can be only a few pixels wide, making a panel
+        # resize unnecessarily difficult.  Keep a generous, visible grab area.
+        center_splitter.setHandleWidth(14)
+        center_splitter.setChildrenCollapsible(False)
+        center_splitter.setStyleSheet(
+            "QSplitter::handle { background: palette(mid); }"
+            "QSplitter::handle:hover { background: #3B82F6; }"
+        )
         center_splitter.addWidget(self.project_tree)
         center_splitter.addWidget(self.viewer)
         center_splitter.addWidget(self.info_panel)
         center_splitter.setStretchFactor(1, 1)
 
         main_splitter = QSplitter(Qt.Orientation.Vertical)
+        main_splitter.setHandleWidth(14)
+        main_splitter.setChildrenCollapsible(False)
+        main_splitter.setStyleSheet(
+            "QSplitter::handle { background: palette(mid); }"
+            "QSplitter::handle:hover { background: #3B82F6; }"
+        )
         main_splitter.addWidget(center_splitter)
         main_splitter.addWidget(self.bottom_tabs)
         main_splitter.setStretchFactor(0, 1)
