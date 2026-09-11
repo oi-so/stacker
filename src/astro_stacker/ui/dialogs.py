@@ -404,6 +404,7 @@ class StackingSettingsDialog(QDialog):
         artifact_note = QLabel(
             "対象Lightを選び、電線や電柱の中心線を幅付きで指定します。"
             "マスク部分はそのフレームのスタック寄与から除外されます。"
+            "追尾・位置合わせ撮影では障害物が移動するため、各Lightに個別のマスクを作成してください。"
         )
         artifact_note.setWordWrap(True)
         self.artifact_frame = QComboBox()
@@ -464,6 +465,7 @@ class StackingSettingsDialog(QDialog):
             image,
             line_width=self._pending_artifact_line_width,
             feather=self._pending_artifact_feather,
+            allow_apply_to_all=not self.project.settings.use_alignment,
             parent=self,
         )
         if editor.exec() != WireMaskEditorDialog.DialogCode.Accepted:

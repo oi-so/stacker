@@ -152,7 +152,15 @@ class LineDetectionWorker(QObject):
 
 
 class WireMaskEditorDialog(QDialog):
-    def __init__(self, image: np.ndarray, *, line_width=8.0, feather=3.0, parent=None):
+    def __init__(
+        self,
+        image: np.ndarray,
+        *,
+        line_width=8.0,
+        feather=3.0,
+        allow_apply_to_all: bool = True,
+        parent=None,
+    ):
         super().__init__(parent)
         self.image = np.asarray(image)
         self._detect_thread: QThread | None = None
@@ -192,6 +200,16 @@ class WireMaskEditorDialog(QDialog):
         self.apply_to_all.setToolTip(
             "固定撮影など、電線が全フレームの同じ画素位置にある場合だけ使用します。"
         )
+        if not allow_apply_to_all:
+            self.apply_to_all.setEnabled(False)
+            self.apply_to_all.setToolTip(
+                "追尾・位置合わせ撮影では障害物がフレームごとに移動するため使用できません。"
+                "各Lightを選んで個別にマスクを登録してください。"
+            )
+            self.status.setText(
+                "追尾・位置合わせ撮影です。障害物はフレームごとに位置が変わるため、"
+                "このLightだけにマスクを登録します。新しく現れた障害物も該当Lightで追加してください。"
+            )
         for widget in (
             new_line,
             new_area,

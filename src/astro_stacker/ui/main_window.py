@@ -1074,6 +1074,7 @@ class MainWindow(QMainWindow):
             self.manager.get_image(frame),
             line_width=settings.line_width,
             feather=settings.feather,
+            allow_apply_to_all=not self.controller.project.settings.use_alignment,
             parent=self,
         )
         if editor.exec() != WireMaskEditorDialog.DialogCode.Accepted:
