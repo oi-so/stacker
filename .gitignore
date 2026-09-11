@@ -21,9 +21,12 @@ build/
 .DS_Store
 
 test_images
-tests
+tests/*
+!tests/regression/
 
 app.dist
 app.build
 
 activate_project.sh
+# Generated image analysis history
+*.astrostacker.json

@@ -15,19 +15,36 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
     QRadioButton,
     QSpinBox,
+    QTabWidget,
     QTextEdit,
     QVBoxLayout,
+    QWidget,
 )
 
 from ..io.image_manager import ImageManager
+from ..io.saver import save_image
 from ..project.project import Project
-from ..project.settings import AlignmentMode, ReferenceMode, StackingMethod
+from ..project.settings import (
+    AlignmentMode,
+    AlignmentStrategy,
+    BoundaryMode,
+    FrameSelectionMode,
+    GroundSource,
+    HDRStopAfter,
+    NightscapeOutput,
+    ObstacleMode,
+    ReferenceMode,
+    StackingMethod,
+)
 from .moving_object_dialog import MovingObjectSettingsDialog
+from .path_history import last_dialog_directory, remember_dialog_path
+from .wire_mask_editor import WireMaskEditorDialog
 
 
 class AlignmentSettingsDialog(QDialog):
@@ -40,7 +57,7 @@ class AlignmentSettingsDialog(QDialog):
 
         self.timing = QComboBox()
         self.timing.addItems(["位置合わせ前", "位置合わせ後"])
-        self.timing.setCurrentIndex(0 if self.settings.value("alignment/calibrate_before", True, bool) else 1)
+        self.timing.setCurrentIndex(0 if project.settings.alignment.calibrate_before_align else 1)
         layout.addRow("キャリブレーション", self.timing)
 
         self.use_dark = QCheckBox("Dark")
@@ -53,7 +70,7 @@ class AlignmentSettingsDialog(QDialog):
             ("calibration/use_flats", self.use_flat),
             ("calibration/use_flat_darks", self.use_flat_dark),
         ]:
-            box.setChecked(self.settings.value(key, True, bool))
+            box.setChecked(getattr(project.settings.calibration, key.split("/")[1]))
         calibration_box = QGroupBox()
         calibration_layout = QHBoxLayout(calibration_box)
         for box in (self.use_dark, self.use_bias, self.use_flat, self.use_flat_dark):
@@ -66,7 +83,7 @@ class AlignmentSettingsDialog(QDialog):
         sessions = project.get_alignment_sessions()
         has_session = len(sessions) == 1
         self.mode_new.setEnabled(has_session)
-        if self.settings.value("alignment/mode", "all") == "new_only" and has_session:
+        if project.settings.alignment.mode == "new_only" and has_session:
             self.mode_new.setChecked(True)
         else:
             self.mode_all.setChecked(True)
@@ -80,11 +97,12 @@ class AlignmentSettingsDialog(QDialog):
 
         self.reference = QComboBox()
         self.reference.addItems(["自動（中央）", "自動（最高品質）", "手動選択"])
-        self.reference.setCurrentIndex(self.settings.value("alignment/reference", 0, int))
+        self.reference.setCurrentIndex(list(ReferenceMode).index(project.settings.alignment.reference_mode))
 
         self.manual_reference = QComboBox()
         for frame in project.light_frames:
-            if not frame.info.enabled: continue
+            if not frame.info.enabled:
+                continue
             self.manual_reference.addItem(
                 frame.info.path.name,
                 frame
@@ -99,7 +117,7 @@ class AlignmentSettingsDialog(QDialog):
                 if index >= 0:
                     self.manual_reference.setCurrentIndex(index)
             elif not project.reference_image.info.enabled:
-                if self.settings.value("alignment/reference", 0, int) == 2:
+                if list(ReferenceMode).index(project.settings.alignment.reference_mode) == 2:
                     self.reference.setCurrentIndex(0)
 
 
@@ -109,13 +127,20 @@ class AlignmentSettingsDialog(QDialog):
         self.sigma = QDoubleSpinBox()
         self.sigma.setRange(3.0, 10.0)
         self.sigma.setSingleStep(0.5)
-        self.sigma.setValue(self.settings.value("alignment/sigma", 5.0, float))
+        self.sigma.setValue(project.settings.alignment.sigma)
         layout.addRow("星検出感度 sigma", self.sigma)
 
         self.max_stars = QSpinBox()
         self.max_stars.setRange(20, 5000)
-        self.max_stars.setValue(self.settings.value("alignment/max_stars", 500, int))
+        self.max_stars.setValue(project.settings.alignment.max_stars)
         layout.addRow("最大星数", self.max_stars)
+
+        self.use_wcs = QCheckBox("利用可能ならFITS WCSから高速に位置合わせ")
+        self.use_wcs.setChecked(project.settings.alignment.use_wcs)
+        self.use_wcs.setToolTip(
+            "全Lightに有効な天球WCSがある場合、星の再検出・照合を省略します。"
+        )
+        layout.addRow(self.use_wcs)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
@@ -136,6 +161,7 @@ class AlignmentSettingsDialog(QDialog):
             self.project.set_reference_image(self.manual_reference.currentData())
         alignment.sigma = self.sigma.value()
         alignment.max_stars = self.max_stars.value()
+        alignment.use_wcs = self.use_wcs.isChecked()
         calibration.use_darks = self.use_dark.isChecked()
         calibration.use_biases = self.use_bias.isChecked()
         calibration.use_flats = self.use_flat.isChecked()
@@ -147,6 +173,7 @@ class AlignmentSettingsDialog(QDialog):
         self.settings.setValue("alignment/reference", self.reference.currentIndex())
         self.settings.setValue("alignment/sigma", alignment.sigma)
         self.settings.setValue("alignment/max_stars", alignment.max_stars)
+        self.settings.setValue("alignment/use_wcs", alignment.use_wcs)
         self.settings.setValue("calibration/use_darks", calibration.use_darks)
         self.settings.setValue("calibration/use_biases", calibration.use_biases)
         self.settings.setValue("calibration/use_flats", calibration.use_flats)
@@ -168,20 +195,37 @@ class StackingSettingsDialog(QDialog):
         self.manager = manager
         self.settings = QSettings("AstroStacker", "AstroStacker")
         self.setWindowTitle("スタック設定")
-        layout = QFormLayout(self)
+        self.resize(720, 600)
+        root_layout = QVBoxLayout(self)
+        tabs = QTabWidget()
+        basic_tab = QWidget()
+        quality_tab = QWidget()
+        correction_tab = QWidget()
+        artifact_tab = QWidget()
+        layout = QFormLayout(basic_tab)
+        quality_layout = QFormLayout(quality_tab)
+        correction_layout = QFormLayout(correction_tab)
+        artifact_tab_layout = QFormLayout(artifact_tab)
+        tabs.addTab(basic_tab, "基本")
+        tabs.addTab(quality_tab, "正規化・選別")
+        tabs.addTab(correction_tab, "Drizzle・Bad Pixel")
+        tabs.addTab(artifact_tab, "障害物")
+        root_layout.addWidget(tabs)
         self.method = QComboBox()
         for method in StackingMethod:
             self.method.addItem(method.show_name, method)
-        current = self.settings.value("stacking/method", project.settings.light_frame.method)
+        current = project.settings.light_frame.method
         self.method.setCurrentIndex(self.method.findData(current))
+        self.method.setToolTip(
+            "Average: 高速な平均 / Median: 外れ値に強い中央値 / Add: 加算\n"
+            "Sigma Clipping: σで外れ値を除外\n"
+            "比較明・比較暗: 各画素・チャンネルの最大値・最小値\n"
+            "最大・最小除外平均: 各画素で最大・最小を1個ずつ除いて平均（3枚以上）"
+        )
         layout.addRow("スタック方法", self.method)
 
 
-        use_alignment = self.settings.value(
-            "stacking/use_alignment",
-            project.settings.use_alignment,
-            type=bool,
-        )
+        use_alignment = project.settings.use_alignment
         alignment_mode_box = QGroupBox("使用する画像")
         alignment_mode_layout = QVBoxLayout(alignment_mode_box)
         self.alignment_group = QButtonGroup(self)
@@ -232,11 +276,11 @@ class StackingSettingsDialog(QDialog):
 
         self.sigma = QDoubleSpinBox()
         self.sigma.setRange(0.5, 10.0)
-        self.sigma.setValue(self.settings.value("stacking/sigma", 3.0, float))
+        self.sigma.setValue(project.settings.light_frame.sigma)
         sigma_layout.addRow("Sigma", self.sigma)
         self.iterations = QSpinBox()
         self.iterations.setRange(1, 10)
-        self.iterations.setValue(self.settings.value("stacking/iterations", 1, int))
+        self.iterations.setValue(project.settings.light_frame.iterations)
         sigma_layout.addRow("繰り返し", self.iterations)
 
         self.method.currentIndexChanged.connect(self._update_sigma_widgets)
@@ -244,12 +288,293 @@ class StackingSettingsDialog(QDialog):
 
         layout.addRow(self.sigma_group)
 
+        weighting = QGroupBox("正規化・品質")
+        weighting_layout = QFormLayout(weighting)
+        self.use_masks = QCheckBox("位置合わせ後の無効領域を除外")
+        self.use_masks.setChecked(project.settings.light_frame.use_weight_masks)
+        self.use_quality_weights = QCheckBox("品質重みを使用（完全除外とは別）")
+        self.use_quality_weights.setChecked(project.settings.light_frame.use_quality_weights)
+        self.exposure_normalization = QCheckBox("露出時間で正規化（線形画像向け）")
+        self.exposure_normalization.setChecked(
+            project.settings.light_frame.exposure_normalization
+        )
+        self.background_normalization = QComboBox()
+        self.background_normalization.addItem("なし", "none")
+        self.background_normalization.addItem("Median", "median")
+        self.background_normalization.addItem("Robust", "robust")
+        background = project.settings.light_frame.background_normalization
+        self.background_normalization.setCurrentIndex(
+            max(0, self.background_normalization.findData(background))
+        )
+        weighting_layout.addRow(self.use_masks)
+        weighting_layout.addRow(self.use_quality_weights)
+        weighting_layout.addRow(self.exposure_normalization)
+        weighting_layout.addRow("背景正規化", self.background_normalization)
+        quality_layout.addRow(weighting)
+
+        selection = QGroupBox("フレーム選別")
+        selection_layout = QFormLayout(selection)
+        self.selection_mode = QComboBox()
+        for label, mode in (
+            ("全画像", FrameSelectionMode.ALL),
+            ("上位 %", FrameSelectionMode.TOP_PERCENT),
+            ("上位 n 枚", FrameSelectionMode.TOP_COUNT),
+            ("Score閾値以上", FrameSelectionMode.SCORE_THRESHOLD),
+            ("手動", FrameSelectionMode.MANUAL),
+        ):
+            self.selection_mode.addItem(label, mode)
+        current_selection = project.settings.processing.frame_selection
+        self.selection_mode.setCurrentIndex(self.selection_mode.findData(current_selection.mode))
+        self.selection_value = QDoubleSpinBox()
+        self.selection_value.setRange(0, 100000)
+        self.selection_value.setValue(current_selection.value)
+        selection_layout.addRow("方式", self.selection_mode)
+        selection_layout.addRow("値", self.selection_value)
+        quality_layout.addRow(selection)
+
+        drizzle = project.settings.processing.drizzle
+        drizzle_box = QGroupBox("Drizzle（恒星位置合わせ時）")
+        drizzle_layout = QFormLayout(drizzle_box)
+        self.drizzle_enabled = QCheckBox("Drizzleを使用")
+        self.drizzle_enabled.setChecked(drizzle.enabled)
+        self.drizzle_scale = QComboBox()
+        self.drizzle_scale.addItem("2x（画素数4倍）", 2)
+        self.drizzle_scale.addItem("3x（画素数9倍）", 3)
+        self.drizzle_scale.setCurrentIndex(max(0, self.drizzle_scale.findData(drizzle.scale)))
+        self.drizzle_pixfrac = QDoubleSpinBox()
+        self.drizzle_pixfrac.setRange(0.1, 1.0)
+        self.drizzle_pixfrac.setSingleStep(0.05)
+        self.drizzle_pixfrac.setValue(drizzle.pixfrac)
+        drizzle_layout.addRow(self.drizzle_enabled)
+        drizzle_layout.addRow("倍率", self.drizzle_scale)
+        drizzle_layout.addRow("Pixfrac", self.drizzle_pixfrac)
+        correction_layout.addRow(drizzle_box)
+
+        cosmetic = project.settings.processing.cosmetic_correction
+        cosmetic_box = QGroupBox("Bad Pixel補正")
+        cosmetic_layout = QFormLayout(cosmetic_box)
+        self.cosmetic_enabled = QCheckBox("Bad Pixel補正")
+        self.cosmetic_enabled.setChecked(cosmetic.enabled)
+        self.bad_pixel_source = QComboBox()
+        self.bad_pixel_source.addItem("保存済みBad Pixel Map", "map")
+        self.bad_pixel_source.addItem("Lightsから自動検出（Dark/Bias不要）", "lights")
+        self.bad_pixel_source.setCurrentIndex(
+            max(0, self.bad_pixel_source.findData(cosmetic.source))
+        )
+        self.bad_pixel_path = QLineEdit(
+            str(cosmetic.bad_pixel_map_path) if cosmetic.bad_pixel_map_path else ""
+        )
+        bad_pixel_browse = QPushButton("選択...")
+        bad_pixel_browse.clicked.connect(self._browse_bad_pixel_map)
+        bad_pixel_row = QHBoxLayout()
+        bad_pixel_row.addWidget(self.bad_pixel_path)
+        bad_pixel_row.addWidget(bad_pixel_browse)
+        self.bad_pixel_method = QComboBox()
+        self.bad_pixel_method.addItem("Median", "median")
+        self.bad_pixel_method.addItem("距離加重補間", "bilinear")
+        self.bad_pixel_method.setCurrentIndex(
+            max(0, self.bad_pixel_method.findData(cosmetic.method))
+        )
+        self.bad_pixel_sigma = QDoubleSpinBox()
+        self.bad_pixel_sigma.setRange(3, 30)
+        self.bad_pixel_sigma.setValue(cosmetic.light_sigma)
+        self.bad_pixel_persistence = QDoubleSpinBox()
+        self.bad_pixel_persistence.setRange(0.3, 1.0)
+        self.bad_pixel_persistence.setSingleStep(0.05)
+        self.bad_pixel_persistence.setValue(cosmetic.light_persistence)
+        self.bad_pixel_source.currentIndexChanged.connect(self._update_bad_pixel_widgets)
+        cosmetic_layout.addRow(self.cosmetic_enabled)
+        cosmetic_layout.addRow("検出元", self.bad_pixel_source)
+        cosmetic_layout.addRow("Bad Pixel Map", bad_pixel_row)
+        cosmetic_layout.addRow("Lights検出 sigma", self.bad_pixel_sigma)
+        cosmetic_layout.addRow("継続率", self.bad_pixel_persistence)
+        cosmetic_layout.addRow("補間方式", self.bad_pixel_method)
+        correction_layout.addRow(cosmetic_box)
+        self._update_bad_pixel_widgets()
+
+        artifacts = project.settings.processing.artifact_masks
+        self._pending_artifact_paths = dict(artifacts.mask_paths)
+        self._pending_reference_mask_path = artifacts.reference_mask_path
+        self._pending_reference_frame_path = artifacts.reference_frame_path
+        self._pending_artifact_line_width = artifacts.line_width
+        self._pending_artifact_feather = artifacts.feather
+        artifact_box = QGroupBox("電線・電柱・局所障害物")
+        artifact_layout = QFormLayout(artifact_box)
+        self.artifact_masks_enabled = QCheckBox(
+            f"スタック時に登録済みマスクを使用（{len(artifacts.mask_paths)}フレーム）"
+        )
+        self.artifact_masks_enabled.setChecked(artifacts.enabled)
+        self.obstacle_mode = QComboBox()
+        self.obstacle_mode.addItem("固定撮影（フレーム別マスク）", ObstacleMode.FIXED)
+        self.obstacle_mode.addItem("追尾撮影（基準マスクを追従）", ObstacleMode.TRACKED)
+        self.obstacle_mode.setCurrentIndex(
+            max(0, self.obstacle_mode.findData(artifacts.mode))
+        )
+        self.obstacle_auto_detect = QCheckBox("未登録の新規障害物候補を検出（確認後に適用）")
+        self.obstacle_auto_detect.setChecked(artifacts.auto_detect_new)
+        self.obstacle_confidence = QDoubleSpinBox()
+        self.obstacle_confidence.setRange(0.3, 1.0)
+        self.obstacle_confidence.setSingleStep(0.05)
+        self.obstacle_confidence.setValue(artifacts.confidence_threshold)
+        artifact_note = QLabel(
+            "対象Lightを選び、電線や電柱の中心線を幅付きで指定します。"
+            "マスク部分はそのフレームのスタック寄与から除外されます。"
+            "追尾・位置合わせ撮影では障害物が移動するため、各Lightに個別のマスクを作成してください。"
+        )
+        artifact_note.setWordWrap(True)
+        self.artifact_frame = QComboBox()
+        for frame in project.light_frames:
+            if frame.info.enabled:
+                self.artifact_frame.addItem(frame.info.path.name, frame)
+        artifact_buttons = QHBoxLayout()
+        create_artifact = QPushButton("マスクを作成・置換...")
+        create_artifact.clicked.connect(self._create_artifact_mask)
+        remove_artifact = QPushButton("選択フレームの登録解除")
+        remove_artifact.clicked.connect(self._remove_artifact_mask)
+        artifact_buttons.addWidget(create_artifact)
+        artifact_buttons.addWidget(remove_artifact)
+        artifact_layout.addRow(self.artifact_masks_enabled)
+        artifact_layout.addRow("撮影モード", self.obstacle_mode)
+        artifact_layout.addRow(self.obstacle_auto_detect)
+        artifact_layout.addRow("候補信頼度", self.obstacle_confidence)
+        artifact_layout.addRow(artifact_note)
+        artifact_layout.addRow("対象Light", self.artifact_frame)
+        artifact_layout.addRow(artifact_buttons)
+        artifact_tab_layout.addRow(artifact_box)
+
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        root_layout.addWidget(buttons)
+
+    def _browse_bad_pixel_map(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Bad Pixel Mapを選択",
+            str(last_dialog_directory(self.settings)),
+            "Images (*.fits *.fit *.fts *.tif *.tiff *.png)",
+        )
+        if path:
+            remember_dialog_path(self.settings, path)
+            self.bad_pixel_path.setText(path)
+
+    def _update_bad_pixel_widgets(self) -> None:
+        from_lights = self.bad_pixel_source.currentData() == "lights"
+        self.bad_pixel_path.setEnabled(not from_lights)
+        self.bad_pixel_sigma.setEnabled(from_lights)
+        self.bad_pixel_persistence.setEnabled(from_lights)
+
+    def _refresh_artifact_count(self) -> None:
+        self.artifact_masks_enabled.setText(
+            f"スタック時に登録済みマスクを使用（{len(self._pending_artifact_paths)}フレーム）"
+        )
+
+    def _create_artifact_mask(self) -> None:
+        frame = self.artifact_frame.currentData()
+        if frame is None:
+            QMessageBox.information(self, "電線・電柱除去", "有効なLightフレームがありません。")
+            return
+        try:
+            image = self.manager.get_image(frame)
+        except Exception as exc:
+            QMessageBox.warning(self, "マスク作成", f"画像を読み込めませんでした: {exc}")
+            return
+        editor = WireMaskEditorDialog(
+            image,
+            line_width=self._pending_artifact_line_width,
+            feather=self._pending_artifact_feather,
+            allow_apply_to_all=not self.project.settings.use_alignment,
+            parent=self,
+        )
+        if editor.exec() != WireMaskEditorDialog.DialogCode.Accepted:
+            return
+        save_dialog = SaveDialog(frame.info.path.parent, self)
+        save_dialog.setWindowTitle("電線・電柱・障害物Weight Maskを保存")
+        save_dialog.path.setText(
+            str(frame.info.path.with_name(frame.info.path.stem + "_artifact_mask.fits"))
+        )
+        if save_dialog.exec() != SaveDialog.DialogCode.Accepted:
+            return
+        path, options = save_dialog.selected()
+        try:
+            save_image(editor.mask(), path, metadata=frame.info.exif, **options)
+        except Exception as exc:
+            QMessageBox.warning(self, "マスク保存", f"マスクを保存できませんでした: {exc}")
+            return
+        tracked_base = self.obstacle_mode.currentData() == ObstacleMode.TRACKED
+        targets = (
+            []
+            if tracked_base
+            else (
+                [candidate for candidate in self.project.light_frames if candidate.info.enabled]
+                if editor.apply_to_all.isChecked()
+                else [frame]
+            )
+        )
+        for target in targets:
+            self._pending_artifact_paths[target.info.path] = path
+        if tracked_base:
+            # The selected Light is the coordinate system in which the user
+            # drew this base mask.  Its mask is transformed for every frame
+            # during stacking; later per-frame edits remain separate.
+            self._pending_reference_mask_path = path
+            self._pending_reference_frame_path = frame.info.path
+        self._pending_artifact_line_width = editor.width.value()
+        self._pending_artifact_feather = editor.feather.value()
+        self.artifact_masks_enabled.setChecked(True)
+        self._refresh_artifact_count()
+
+    def _remove_artifact_mask(self) -> None:
+        frame = self.artifact_frame.currentData()
+        if frame is not None:
+            self._pending_artifact_paths.pop(frame.info.path, None)
+            self._refresh_artifact_count()
 
     def accept(self) -> None:
+        if self.drizzle_enabled.isChecked():
+            if not self.use_alignment_btn.isChecked():
+                QMessageBox.warning(self, "Drizzle", "Drizzleには恒星位置合わせが必要です。")
+                return
+            if self.method.currentData() not in (StackingMethod.AVERAGE, StackingMethod.ADD):
+                QMessageBox.warning(
+                    self, "Drizzle", "DrizzleではAverageまたはAddを選択してください。"
+                )
+                return
+        bad_pixel_path = self.bad_pixel_path.text().strip()
+        bad_pixel_source = self.bad_pixel_source.currentData()
+        if (
+            self.cosmetic_enabled.isChecked()
+            and bad_pixel_source == "map"
+            and not bad_pixel_path
+        ):
+            QMessageBox.warning(self, "Bad Pixel補正", "Bad Pixel Mapを選択してください。")
+            return
+        if bad_pixel_source == "map" and bad_pixel_path and not Path(bad_pixel_path).is_file():
+            QMessageBox.warning(self, "Bad Pixel補正", "指定したBad Pixel Mapが見つかりません。")
+            return
+        if (
+            self.cosmetic_enabled.isChecked()
+            and bad_pixel_source == "lights"
+            and sum(frame.info.enabled for frame in self.project.light_frames) < 3
+        ):
+            QMessageBox.warning(
+                self, "Bad Pixel補正", "Lightsからの自動検出には3枚以上必要です。"
+            )
+            return
+        artifacts = self.project.settings.processing.artifact_masks
+        tracked = self.obstacle_mode.currentData() == ObstacleMode.TRACKED
+        if (
+            self.artifact_masks_enabled.isChecked()
+            and not self._pending_artifact_paths
+            and not (
+                tracked
+                and self._pending_reference_mask_path
+            )
+        ):
+            QMessageBox.warning(
+                self, "電線・電柱・障害物除去", "先にフレームごとの障害物マスクを作成してください。"
+            )
+            return
         if self.moving_basis_btn.isChecked():
             if not self.use_alignment_btn.isChecked():
                 QMessageBox.warning(
@@ -269,6 +594,36 @@ class StackingSettingsDialog(QDialog):
         self.project.settings.light_frame.method = methods[self.method.currentIndex()]
         self.project.settings.light_frame.sigma = self.sigma.value()
         self.project.settings.light_frame.iterations = self.iterations.value()
+        self.project.settings.light_frame.use_weight_masks = self.use_masks.isChecked()
+        self.project.settings.light_frame.use_quality_weights = self.use_quality_weights.isChecked()
+        self.project.settings.light_frame.exposure_normalization = (
+            self.exposure_normalization.isChecked()
+        )
+        self.project.settings.light_frame.background_normalization = (
+            self.background_normalization.currentData()
+        )
+        self.project.settings.processing.frame_selection.mode = self.selection_mode.currentData()
+        self.project.settings.processing.frame_selection.value = self.selection_value.value()
+        drizzle = self.project.settings.processing.drizzle
+        drizzle.enabled = self.drizzle_enabled.isChecked()
+        drizzle.scale = self.drizzle_scale.currentData()
+        drizzle.pixfrac = self.drizzle_pixfrac.value()
+        cosmetic = self.project.settings.processing.cosmetic_correction
+        cosmetic.enabled = self.cosmetic_enabled.isChecked()
+        cosmetic.source = bad_pixel_source
+        cosmetic.bad_pixel_map_path = Path(bad_pixel_path) if bad_pixel_path else None
+        cosmetic.method = self.bad_pixel_method.currentData()
+        cosmetic.light_sigma = self.bad_pixel_sigma.value()
+        cosmetic.light_persistence = self.bad_pixel_persistence.value()
+        artifacts.mask_paths = self._pending_artifact_paths
+        artifacts.reference_mask_path = self._pending_reference_mask_path
+        artifacts.reference_frame_path = self._pending_reference_frame_path
+        artifacts.mode = self.obstacle_mode.currentData()
+        artifacts.auto_detect_new = self.obstacle_auto_detect.isChecked()
+        artifacts.confidence_threshold = self.obstacle_confidence.value()
+        artifacts.line_width = self._pending_artifact_line_width
+        artifacts.feather = self._pending_artifact_feather
+        artifacts.enabled = self.artifact_masks_enabled.isChecked()
         self.settings.setValue("stacking/method", self.project.settings.light_frame.method)
         self.settings.setValue("stacking/sigma", self.sigma.value())
         self.settings.setValue("stacking/iterations", self.iterations.value())
@@ -306,6 +661,7 @@ class StackingSettingsDialog(QDialog):
 class SaveDialog(QDialog):
     def __init__(self, default_folder: Path, parent=None):
         super().__init__(parent)
+        self.settings = QSettings("AstroStacker", "AstroStacker")
         self.setWindowTitle("保存")
         layout = QFormLayout(self)
         self.format = QComboBox()
@@ -314,6 +670,10 @@ class SaveDialog(QDialog):
         self.bit_depth = QComboBox()
         self.bit_depth.addItems(["16", "32 float"])
         layout.addRow("保存ビット", self.bit_depth)
+        self.comment = QTextEdit()
+        self.comment.setPlaceholderText("任意の出力コメント（撮影条件の集計に追記）")
+        self.comment.setMaximumHeight(90)
+        layout.addRow("EXIFコメント", self.comment)
         self.quality = QSpinBox()
         self.quality.setRange(0, 100)
         self.quality.setValue(90)
@@ -334,8 +694,16 @@ class SaveDialog(QDialog):
 
     def _browse(self):
         suffix = self.format.currentText().lower().replace("jpeg", "jpg")
-        path, _ = QFileDialog.getSaveFileName(self, "保存", self.path.text(), f"{self.format.currentText()} (*.{suffix})")
+        current = Path(self.path.text())
+        initial = last_dialog_directory(self.settings, current) / current.name
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存",
+            str(initial),
+            f"{self.format.currentText()} (*.{suffix})",
+        )
         if path:
+            remember_dialog_path(self.settings, path)
             self.path.setText(path)
 
     def selected(self) -> tuple[Path, dict]:
@@ -346,7 +714,366 @@ class SaveDialog(QDialog):
         return path, {
             "bit_depth": 32 if self.bit_depth.currentIndex() == 1 else 16,
             "quality": self.quality.value(),
+            "comment": self.comment.toPlainText(),
         }
+
+
+class HDRSettingsDialog(QDialog):
+    def __init__(self, project: Project, default_folder: Path, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.settings = QSettings("AstroStacker", "AstroStacker")
+        self.setWindowTitle("HDR")
+        layout = QFormLayout(self)
+        self.auto_group = QCheckBox("EXIF撮影条件で自動グループ化")
+        self.auto_group.setChecked(project.settings.processing.hdr.auto_group)
+        frames = [frame for frame in project.light_frames if frame.info.enabled]
+        self.manual_groups = QLineEdit(
+            ",".join(
+                project.settings.processing.hdr.manual_groups.get(
+                    str(frame.info.path), str(index + 1)
+                )
+                for index, frame in enumerate(frames)
+            )
+        )
+        self.manual_groups.setPlaceholderText("フレーム順のグループID（例: 1,1,2,2）")
+        self.manual_groups.setEnabled(not self.auto_group.isChecked())
+        self.auto_group.toggled.connect(
+            lambda checked: self.manual_groups.setEnabled(not checked)
+        )
+        self.stop_after = QComboBox()
+        self.stop_after.addItem("露出別Stackを保存して終了", HDRStopAfter.EXPOSURE_STACKS)
+        self.stop_after.addItem("HDR Mergeまで", HDRStopAfter.MERGE)
+        self.stop_after.addItem("Tone Mappingまで", HDRStopAfter.TONE_MAP)
+        self.stop_after.setCurrentIndex(
+            self.stop_after.findData(project.settings.processing.hdr.stop_after)
+        )
+        self.tone_mapping = QComboBox()
+        self.tone_mapping.addItem("Global", "global")
+        self.tone_mapping.addItem("Local", "local")
+        self.tone_mapping.addItem("Log", "log")
+        self.tone_mapping.setCurrentIndex(
+            max(0, self.tone_mapping.findData(project.settings.processing.hdr.tone_mapping))
+        )
+        self.local_scale = QDoubleSpinBox()
+        self.local_scale.setRange(0.5, 1024)
+        self.local_scale.setValue(project.settings.processing.hdr.local_scale)
+        self.detail_strength = QDoubleSpinBox()
+        self.detail_strength.setRange(0, 4)
+        self.detail_strength.setSingleStep(0.1)
+        self.detail_strength.setValue(project.settings.processing.hdr.detail_strength)
+        self.format = QComboBox()
+        for label, suffix in (("FITS", ".fits"), ("TIFF", ".tiff"), ("PNG", ".png"), ("JPEG", ".jpg")):
+            self.format.addItem(label, suffix)
+        self.output = QLineEdit(str(default_folder / "hdr"))
+        browse = QPushButton("参照")
+        browse.clicked.connect(self._browse)
+        row = QHBoxLayout()
+        row.addWidget(self.output)
+        row.addWidget(browse)
+        layout.addRow(self.auto_group)
+        layout.addRow("手動グループ", self.manual_groups)
+        layout.addRow("実行範囲", self.stop_after)
+        layout.addRow("Tone Mapping", self.tone_mapping)
+        layout.addRow("Local scale", self.local_scale)
+        layout.addRow("Detail strength", self.detail_strength)
+        layout.addRow("保存形式", self.format)
+        layout.addRow("出力フォルダ", row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse(self):
+        folder = QFileDialog.getExistingDirectory(
+            self, "HDR出力フォルダ", str(last_dialog_directory(self.settings, self.output.text()))
+        )
+        if folder:
+            remember_dialog_path(self.settings, folder, directory=True)
+            self.output.setText(folder)
+
+    def accept(self):
+        settings = self.project.settings.processing.hdr
+        settings.auto_group = self.auto_group.isChecked()
+        if not settings.auto_group:
+            frames = [frame for frame in self.project.light_frames if frame.info.enabled]
+            labels = [value.strip() for value in self.manual_groups.text().split(",")]
+            if len(labels) != len(frames) or any(not value for value in labels):
+                QMessageBox.warning(
+                    self,
+                    "HDR手動グループ",
+                    f"有効フレーム{len(frames)}枚分のグループIDをカンマ区切りで指定してください。",
+                )
+                return
+            settings.manual_groups = {
+                str(frame.info.path): label
+                for frame, label in zip(frames, labels, strict=True)
+            }
+        settings.stop_after = self.stop_after.currentData()
+        settings.tone_mapping = self.tone_mapping.currentData()
+        settings.local_scale = self.local_scale.value()
+        settings.detail_strength = self.detail_strength.value()
+        super().accept()
+
+    def selected(self):
+        return Path(self.output.text()), self.format.currentData()
+
+
+class TimelapseSettingsDialog(QDialog):
+    def __init__(self, project: Project, default_folder: Path, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.settings = QSettings("AstroStacker", "AstroStacker")
+        self.setWindowTitle("タイムラプス用n枚スタック")
+        layout = QFormLayout(self)
+        settings = project.settings.processing.timelapse
+        self.window = QSpinBox()
+        self.window.setRange(1, 10000)
+        self.window.setValue(settings.window_size)
+        self.step = QSpinBox()
+        self.step.setRange(1, 10000)
+        self.step.setValue(settings.step)
+        self.partial = QCheckBox("最後の端数グループも出力")
+        self.partial.setChecked(settings.include_partial)
+        self.alignment = QComboBox()
+        self.alignment.addItem("位置合わせなし", AlignmentStrategy.NONE)
+        self.alignment.addItem("全画像を共通星座標へ位置合わせ", AlignmentStrategy.STAR_GLOBAL)
+        self.alignment.setCurrentIndex(max(0, self.alignment.findData(settings.alignment)))
+        self.format = QComboBox()
+        for label, suffix in (("FITS", ".fits"), ("TIFF", ".tiff"), ("PNG", ".png"), ("JPEG", ".jpg")):
+            self.format.addItem(label, suffix)
+        self.output = QLineEdit(str(default_folder / "timelapse"))
+        browse = QPushButton("参照")
+        browse.clicked.connect(self._browse)
+        row = QHBoxLayout()
+        row.addWidget(self.output)
+        row.addWidget(browse)
+        layout.addRow("Window size", self.window)
+        layout.addRow("Step", self.step)
+        layout.addRow(self.partial)
+        layout.addRow("Alignment", self.alignment)
+        layout.addRow("保存形式", self.format)
+        layout.addRow("出力フォルダ", row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse(self):
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "タイムラプス出力フォルダ",
+            str(last_dialog_directory(self.settings, self.output.text())),
+        )
+        if folder:
+            remember_dialog_path(self.settings, folder, directory=True)
+            self.output.setText(folder)
+
+    def accept(self):
+        settings = self.project.settings.processing.timelapse
+        settings.window_size = self.window.value()
+        settings.step = self.step.value()
+        settings.include_partial = self.partial.isChecked()
+        settings.alignment = self.alignment.currentData()
+        super().accept()
+
+    def selected(self):
+        return Path(self.output.text()), self.format.currentData()
+
+
+class NightscapeSettingsDialog(QDialog):
+    def __init__(self, project: Project, default_folder: Path, parent=None, suggestion=None):
+        super().__init__(parent)
+        self.project = project
+        self.app_settings = QSettings("AstroStacker", "AstroStacker")
+        settings = project.settings.processing.nightscape
+        self.setWindowTitle("新星景")
+        layout = QFormLayout(self)
+        self.output_mode = QComboBox()
+        for label, value in (
+            ("星空素材だけ", NightscapeOutput.SKY_ONLY),
+            ("地上素材だけ", NightscapeOutput.GROUND_ONLY),
+            ("マスクだけ", NightscapeOutput.MASK_ONLY),
+            ("星空・地上・マスク素材", NightscapeOutput.MATERIALS),
+            ("最終合成まで", NightscapeOutput.FINAL),
+        ):
+            self.output_mode.addItem(label, value)
+        self.output_mode.setCurrentIndex(self.output_mode.findData(settings.output))
+        self.ground_source = QComboBox()
+        self.ground_source.addItem("星空と同じ画像から生成", GroundSource.SAME_FRAMES)
+        self.ground_source.addItem("別撮り画像を使用", GroundSource.SEPARATE_FRAMES)
+        self.ground_source.setCurrentIndex(self.ground_source.findData(settings.ground_source))
+        self.ground_paths = QLineEdit()
+        self.ground_paths.setReadOnly(True)
+        ground_browse = QPushButton("別撮り画像を選択")
+        ground_browse.clicked.connect(self._browse_ground)
+        ground_row = QHBoxLayout()
+        ground_row.addWidget(self.ground_paths)
+        ground_row.addWidget(ground_browse)
+        self.boundary = QComboBox()
+        self.boundary.addItem("地上を完全にマスク", BoundaryMode.GROUND_MASK)
+        self.boundary.addItem("光害フレームで滑らかに合成", BoundaryMode.LIGHT_POLLUTION)
+        self.boundary.addItem("ユーザー作成マスク", BoundaryMode.USER_MASK)
+        self.boundary.setCurrentIndex(self.boundary.findData(settings.boundary_mode))
+        self.user_mask_path = QLineEdit()
+        mask_browse = QPushButton("マスク選択")
+        mask_browse.clicked.connect(self._browse_mask)
+        mask_row = QHBoxLayout()
+        mask_row.addWidget(self.user_mask_path)
+        mask_row.addWidget(mask_browse)
+        self.star_alignment = QCheckBox("星空を恒星基準で処理")
+        self.star_alignment.setChecked(settings.star_alignment)
+        self.ground_alignment = QCheckBox("地上固定Alignment + Stack")
+        self.ground_alignment.setChecked(settings.ground_alignment)
+        self.star_protection = QCheckBox("地平線境界の星を保護")
+        self.star_protection.setChecked(settings.use_star_mask)
+        self.split_mode = QComboBox()
+        self.split_mode.addItem("分割なし", "none")
+        self.split_mode.addItem("反転候補から自動提案", "auto")
+        self.split_mode.addItem("手動分割", "manual")
+        self.split_mode.setCurrentIndex(max(0, self.split_mode.findData(settings.split_mode)))
+        self.split_index = QSpinBox()
+        self.split_index.setRange(0, max(0, len(project.light_frames) - 1))
+        self.split_index.setValue(settings.split_index)
+        self.suggestion = QLabel("自動分割候補: 解析結果なし")
+        self.suggestion.setWordWrap(True)
+        if suggestion is not None:
+            points = ", ".join(str(value) for value in suggestion.split_indices) or "なし"
+            self.suggestion.setText(
+                f"自動分割候補: {points} / 信頼度 {suggestion.confidence:.0%} / "
+                f"{suggestion.reason}。候補を採用せず手動分割へ変更できます。"
+            )
+            if suggestion.split_indices and settings.split_index == 0:
+                self.split_index.setValue(suggestion.split_indices[0])
+        self.feather = QDoubleSpinBox()
+        self.feather.setRange(0, 256)
+        self.feather.setValue(settings.feather)
+        self.blur_scale = QDoubleSpinBox()
+        self.blur_scale.setRange(0.1, 1024)
+        self.blur_scale.setValue(settings.blur_scale)
+        self.transition_width = QDoubleSpinBox()
+        self.transition_width.setRange(0.1, 1024)
+        self.transition_width.setValue(settings.transition_width)
+        self.background_strength = QDoubleSpinBox()
+        self.background_strength.setRange(0, 4)
+        self.background_strength.setSingleStep(0.05)
+        self.background_strength.setValue(settings.background_strength)
+        self.format = QComboBox()
+        for label, suffix in (("FITS", ".fits"), ("TIFF", ".tiff"), ("PNG", ".png"), ("JPEG", ".jpg")):
+            self.format.addItem(label, suffix)
+        self.output = QLineEdit(str(default_folder / "nightscape"))
+        output_browse = QPushButton("参照")
+        output_browse.clicked.connect(self._browse_output)
+        output_row = QHBoxLayout()
+        output_row.addWidget(self.output)
+        output_row.addWidget(output_browse)
+        layout.addRow("作成内容", self.output_mode)
+        layout.addRow("地上画像", self.ground_source)
+        layout.addRow("別撮り地上", ground_row)
+        layout.addRow("境界処理", self.boundary)
+        layout.addRow("ユーザーマスク", mask_row)
+        layout.addRow(self.star_alignment)
+        layout.addRow(self.ground_alignment)
+        layout.addRow(self.star_protection)
+        layout.addRow("時間グループ", self.split_mode)
+        layout.addRow(self.suggestion)
+        layout.addRow("手動分割位置", self.split_index)
+        layout.addRow("Feather", self.feather)
+        layout.addRow("光害 Blur scale", self.blur_scale)
+        layout.addRow("境界 Transition width", self.transition_width)
+        layout.addRow("背景強度", self.background_strength)
+        layout.addRow("保存形式", self.format)
+        layout.addRow("出力フォルダ", output_row)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _browse_ground(self):
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "別撮り地上画像", str(last_dialog_directory(self.app_settings))
+        )
+        if paths:
+            remember_dialog_path(self.app_settings, paths[0])
+            self.ground_paths.setText(";".join(paths))
+
+    def _browse_mask(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "ユーザー作成マスク", str(last_dialog_directory(self.app_settings))
+        )
+        if path:
+            remember_dialog_path(self.app_settings, path)
+            self.user_mask_path.setText(path)
+
+    def _browse_output(self):
+        path = QFileDialog.getExistingDirectory(
+            self, "新星景出力", str(last_dialog_directory(self.app_settings, self.output.text()))
+        )
+        if path:
+            remember_dialog_path(self.app_settings, path, directory=True)
+            self.output.setText(path)
+
+    def accept(self):
+        settings = self.project.settings.processing.nightscape
+        settings.output = self.output_mode.currentData()
+        settings.ground_source = self.ground_source.currentData()
+        settings.boundary_mode = self.boundary.currentData()
+        settings.star_alignment = self.star_alignment.isChecked()
+        settings.ground_alignment = self.ground_alignment.isChecked()
+        settings.use_star_mask = self.star_protection.isChecked()
+        settings.split_mode = self.split_mode.currentData()
+        settings.split_index = self.split_index.value()
+        settings.feather = self.feather.value()
+        settings.blur_scale = self.blur_scale.value()
+        settings.transition_width = self.transition_width.value()
+        settings.background_strength = self.background_strength.value()
+        if settings.ground_source == GroundSource.SEPARATE_FRAMES and not self.ground_paths.text():
+            QMessageBox.warning(self, "新星景", "別撮り地上画像を選択してください。")
+            return
+        if settings.boundary_mode == BoundaryMode.USER_MASK and not self.user_mask_path.text():
+            QMessageBox.warning(self, "新星景", "ユーザー作成マスクを選択してください。")
+            return
+        super().accept()
+
+    def selected(self):
+        ground = [Path(value) for value in self.ground_paths.text().split(";") if value]
+        mask = Path(self.user_mask_path.text()) if self.user_mask_path.text() else None
+        return Path(self.output.text()), self.format.currentData(), ground, mask
+
+
+class ParallelSettingsDialog(QDialog):
+    def __init__(self, project: Project, parent=None):
+        super().__init__(parent)
+        self.project = project
+        self.setWindowTitle("並列処理")
+        layout = QFormLayout(self)
+        self.workers = QSpinBox()
+        self.workers.setRange(0, 256)
+        self.workers.setSpecialValueText("自動（CPU・空きメモリから決定）")
+        self.workers.setValue(project.settings.processing.parallel_workers)
+        layout.addRow("最大ワーカー数", self.workers)
+        note = QLabel(
+            "0では処理ごとにCPU数と空きメモリから安全な並列度を決定します。"
+            "結果順序は入力順に固定され、メモリ不足時は逐次処理へ縮退します。"
+        )
+        note.setWordWrap(True)
+        layout.addRow(note)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def accept(self):
+        self.project.settings.processing.parallel_workers = self.workers.value()
+        super().accept()
 
 
 class ErrorDialog(QMessageBox):

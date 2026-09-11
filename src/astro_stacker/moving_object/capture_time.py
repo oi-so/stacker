@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from ..io.image_data import AstroImage
@@ -13,7 +13,7 @@ _EXIF_FORMATS = (
 )
 
 
-def _parse_capture_time(value: object) -> datetime | None:
+def _parse_capture_time(value: object, offset: object | None = None) -> datetime | None:
     if value is None:
         return None
 
@@ -29,7 +29,7 @@ def _parse_capture_time(value: object) -> datetime | None:
     if parsed is None:
         for date_format in _EXIF_FORMATS:
             try:
-                parsed = datetime.strptime(text, date_format).replace(tzinfo=UTC)
+                parsed = datetime.strptime(text, date_format)
                 break
             except ValueError:
                 continue
@@ -37,23 +37,34 @@ def _parse_capture_time(value: object) -> datetime | None:
     if parsed is None:
         return None
 
-    # DATE-OBS is normally UTC. Most camera EXIF timestamps have no timezone,
-    # but relative intervals remain correct when all frames use the same clock.
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
+        offset_timezone = parse_timezone_offset(offset)
+        if offset_timezone is not None:
+            parsed = parsed.replace(tzinfo=offset_timezone)
+
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+
     return parsed.astimezone(UTC)
 
 
 def capture_midpoint(frame: AstroImage) -> datetime | None:
     """Return the exposure midpoint, or None when no capture time is available."""
-
     metadata = frame.info.exif or {}
-    value = frame.info.capture_time_override_utc or (
-        metadata.get("DATE-OBS")
-        or metadata.get("EXIF DateTimeOriginal")
-        or metadata.get("Image DateTime")
-    )
-    start = _parse_capture_time(value)
+
+    override = frame.info.capture_time_override_utc
+    if override:
+        start = _parse_capture_time(override)
+    else:
+        date_value = (
+            metadata.get("DATE-OBS")
+            or metadata.get("EXIF DateTimeOriginal")
+            or metadata.get("Image DateTime")
+        )
+        offset_value = metadata.get("EXIF OffsetTimeOriginal")
+
+        start = _parse_capture_time(date_value, offset_value)
+
     if start is None:
         return None
 
@@ -136,3 +147,60 @@ def frame_parameters(frames: list[AstroImage]) -> tuple[dict[Path, float], bool]
         )
 
     return ({frame.info.path: float(index) for index, frame in enumerate(frames)}, False)
+
+
+
+def parse_timezone_offset(value: object | None) -> timezone | None:
+    if value is None:
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    try:
+        return datetime.strptime(text, "%z").tzinfo
+    except ValueError:
+        return None
+
+
+def capture_start_wall_time(frame: AstroImage) -> datetime | None:
+    """Return the camera-recorded capture start as a naive datetime.
+
+    The returned datetime represents only the clock value stored by the camera.
+    No timezone information is applied.
+    """
+    metadata = frame.info.exif or {}
+
+    date_value = (
+        metadata.get("DATE-OBS")
+        or metadata.get("EXIF DateTimeOriginal")
+        or metadata.get("Image DateTime")
+    )
+
+    if date_value is None:
+        return None
+
+    text = str(date_value).strip()
+    if not text:
+        return None
+
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        parsed = None
+
+    if parsed is None:
+        for date_format in _EXIF_FORMATS:
+            try:
+                parsed = datetime.strptime(text, date_format)
+                break
+            except ValueError:
+                continue
+
+    if parsed is None:
+        return None
+
+    # The camera clock value is what we want here.
+    # Deliberately discard any timezone information.
+    return parsed.replace(tzinfo=None)

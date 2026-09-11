@@ -15,7 +15,7 @@ from .standard_loader import load_standard_image, load_standard_info
 
 # File extension sets for each loader
 RAW_EXTENSIONS = {
-    '.cr2', '.nef', '.arw', '.dng', '.rw2', '.orf', '.raf', '.pef', '.srw',
+    '.cr2', '.cr3', '.nef', '.arw', '.dng', '.rw2', '.orf', '.raf', '.pef', '.srw',
     '.srf', '.sr2', '.kdc', '.mos', '.mrw', '.mef', '.erf', '.x3f',
     '.bay', '.cap', '.iiq', '.rwl', '.raw'
 }
@@ -43,14 +43,25 @@ def load_info(path: Path) -> AstroImage:
         Tries RAW and FITS loaders first, then falls back to standard loader
         (PNG, JPEG, TIFF, etc.)
     """
-    path = Path(path)
+    path = Path(path).resolve()
+    from .history import load_history, save_history
+    from ..project.codec import fingerprint
+    cached = load_history(path)
+    if cached is not None:
+        return cached
     ext = path.suffix.lower()
     for loader_name, (extensions, info_loader, image_loader) in LOADERS.items():
         if ext in extensions:
             logger.debug("Loading %s metadata with %s loader", path, loader_name)
-            return info_loader(path)
+            frame = info_loader(path)
+            frame._source_fingerprint = fingerprint(path)
+            save_history(frame)
+            return frame
     logger.debug("Loading %s metadata with standard loader", path)
-    return load_standard_info(path)
+    frame = load_standard_info(path)
+    frame._source_fingerprint = fingerprint(path)
+    save_history(frame)
+    return frame
 
 
 def load_image(astro_image: AstroImage) -> np.ndarray:
@@ -72,4 +83,4 @@ def load_image(astro_image: AstroImage) -> np.ndarray:
         image = load_standard_image(path)
 
     image = np.asarray(image, dtype=np.float32)
-    return np.clip(image, 0, None)
+    return image  # Format loaders already return non-negative float32 data.

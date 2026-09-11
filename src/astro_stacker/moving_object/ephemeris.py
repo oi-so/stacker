@@ -8,6 +8,14 @@ from astropy.time import Time
 from .models import CatalogObject, SkyPosition
 
 
+def _is_comet(target: CatalogObject) -> bool:
+    kind = (target.kind or "").strip().lower()
+    designation = target.designation.strip().upper()
+    return kind.startswith("c") or "/" in designation or (
+        designation[:-1].isdigit() and designation.endswith("P")
+    )
+
+
 class HorizonsEphemeris:
     """Calculate apparent ICRS positions using JPL Horizons."""
 
@@ -26,7 +34,12 @@ class HorizonsEphemeris:
     ) -> list[SkyPosition]:
         if not times:
             return []
-        identifier = target.spk_id or target.designation
+        # A comet's SBDB SPK ID identifies its family of historical orbit
+        # solutions.  Passing it to Horizons can therefore return many
+        # apparitions instead of one ephemeris.  The primary designation plus
+        # CAP asks Horizons to select the apparition closest to the epochs.
+        identifier = target.designation.strip()
+        closest_apparition = _is_comet(target)
         epochs = Time(times, scale="utc").jd.tolist()
         positions: list[SkyPosition] = []
         try:
@@ -34,11 +47,15 @@ class HorizonsEphemeris:
             for start in range(0, len(epochs), 50):
                 query = self._query_factory(
                     id=identifier,
-                    id_type=None if target.spk_id else "smallbody",
+                    id_type="designation",
                     location=observer_code.strip() or "500",
                     epochs=epochs[start : start + 50],
                 )
-                table = query.ephemerides(extra_precision=True, quantities="1")
+                table = query.ephemerides(
+                    extra_precision=True,
+                    quantities="1",
+                    closest_apparition=closest_apparition,
+                )
                 positions.extend(
                     SkyPosition(float(row["RA"]), float(row["DEC"]))
                     for row in table
