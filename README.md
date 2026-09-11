@@ -1,10 +1,10 @@
 # Astro Stacker
 
-Astro Stacker は、天体写真のライトフレームとキャリブレーションフレームを読み込み、
-星基準の位置合わせ、補正、スタック、保存を行う Python / PySide6 製デスクトップアプリです。
+Astro Stacker は、天体写真・星景写真・新星景写真・移動天体・HDR・タイムラプス素材を、
+共通パイプラインで処理する Python / PySide6 製デスクトップアプリです。
 
-この README は現行実装を基準にしています。開発者向けの詳細は `PROJECT_GUIDE.md`、リリース前レビューは
-`RELEASE_REVIEW.md`、処理仕様は `docs/SPEC.md` を参照してください。
+まずは[詳しい使い方](docs/USER_GUIDE.md)を参照してください。開発者向けの詳細は
+`PROJECT_GUIDE.md`、リリース前レビューは `RELEASE_REVIEW.md`、処理仕様は `docs/SPEC.md` にあります。
 
 ## 現在実装済み
 
@@ -20,26 +20,38 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 - astroalign による星基準位置合わせ
 - Astrometry.net (`solve-field`) によるローカル Plate Solve
 - 赤経・赤緯アンカーを使った彗星・小惑星などの移動天体基準スタック
-- Average / Median / Add / Sigma Clipping スタック
-- Median / Sigma Clipping 用の一時 memmap 処理
+- Average / Median / Add / Sigma Clipping / 比較明 / 比較暗 / 最大・最小除外平均スタック
+- float32 Weight Mask、位置合わせ無効領域の除外、品質重み付きスタック
+- 露出時間・背景の正規化と品質スコアによる自動フレーム選別
+- 位置合わせ済み全画像、星マスク、編集可能な地上マスクの書き出し
+- 共通座標の露出別スタック、線形HDR Merge、Global / Local / Log Tone Mapping
+- 星空・地上・マスク・光害フレームを個別出力できる新星景処理
+- 地上固定Alignment、手動Polygon編集、移動方向の解析と時間グループ分割
+- Sliding Window対応のタイムラプス用n枚スタック
+- 2x / 3x Drizzle（Pixfrac指定、Average / Add）
+- Hot / Cold Pixel・異常列を検出するBad Pixel Map生成とCFA対応補正
+- 複数Polyline／Polygon／半自動候補検出による電線・電柱・面状障害物のWeight Mask除外
+- FITS WCSによる高速位置合わせ、画像準備の並列先読み、非同期プレビューとPreview LRU
+- 容量制限付き画像キャッシュと、RAM / 一時 memmap を使い分けるスタック処理
 - スタック結果の `stacked*.fits` 自動保存
 - 画像プレビュー、ズーム、検出星の表示
 - QThread による pipeline の非同期実行
 - Python logging を GUI ログパネルへ表示
 
-## 未実装または制限あり
+## プロジェクト保存とEXIF
 
-- Drizzle
+「ファイル → プロジェクトを保存」で、画像一覧・使用チェック・位置合わせ・Plate Solve・処理設定・表示状態を `.astrostacker` に保存できます。画像ごとの解析履歴は隣の `.astrostacker.json` に自動保存し、再読込時に利用します。
+
+スタック出力には総露出時間、最頻値のISO・F値と、混在条件の内訳を記録します。操作と復元条件は[プロジェクト保存とメタデータ](docs/PROJECTS_AND_METADATA.md)を参照してください。
+
+## 主な制限
+
 - クロップ範囲選択
-- ホットピクセル除去
-- 比較明合成
-- 重み付きスタック
-- 露出差の正規化 / inverse variance weighting
-- EXIF / WCS メタデータの完全継承
+- 元画像のMakerNoteなど独自EXIFの完全継承
 - 言語切り替えの即時反映
-- プロジェクトファイルの完全保存/復元
-- Sigma Clipping の繰り返し回数反映
-- 参照画像の「最高品質」自動選択
+- RAW以外を含む非線形画像での露出正規化は、入力の現像状態に依存する
+- DrizzleはMedian / Sigma Clipping / 比較明暗では使用できない
+- 電線などで全フレームの同一出力画素が隠れる場合は生成補完せず無効画素になる
 
 ## 対応ファイル形式
 
@@ -58,12 +70,19 @@ Astro Stacker は、天体写真のライトフレームとキャリブレーシ
 
 ## 基本フロー
 
-1. Light フレームを追加する。
+1. ツールバーの「フレーム追加」からLightフレームを追加する。
 2. 必要に応じて Dark / Flat / Flat Dark / Bias を追加する。
 3. 使用するフレームにチェックを入れる。
 4. 「位置合わせ」または「スタック」を実行する。
 5. スタック完了後、Light フレームのフォルダに `stacked.fits`, `stacked2.fits` のように自動保存される。
 6. 「保存」から任意形式で別名保存できる。
+
+プロジェクトの読込・保存はツールバーから直接実行できます。HDR、新星景、星マスク、地上マスク、
+通常スタック、HDR、新星景、タイムラプス、障害物マスクはツールバーの「スタック」ドロップダウンに
+まとめています。Bad Pixel Map、位置合わせ済み画像の出力などは「追加処理」にあります。
+スタック設定は「基本」「正規化・選別」「Drizzle・Bad Pixel」「障害物」のタブに分かれ、
+電線・電柱マスクも「障害物」タブから作成して、そのままスタックに使用できます。
+ファイル選択画面は最後に使用したフォルダから開きます。
 
 ## Plate Solve と移動天体スタック
 
@@ -125,9 +144,9 @@ uv run mypy src
 
 - 現行のロード責務は `AstroImage.load()` ではなく `ImageManager.get_image()` にあります。
 - 画像配列は原則 `np.float32` かつ非負値です。
-- Median / Sigma Clipping はメモリ節約のため一時 memmap を使いますが、ディスク容量はフレーム総量分必要です。
+- 画像キャッシュは256MiB、スタック一時ファイルは最大8GiB・SSD空き8GiB確保が既定値です。[処理速度とリソース設定](docs/PERFORMANCE.md)を参照してください。
 - `docs/specification.md` は古い仕様メモです。現行仕様は `docs/SPEC.md` を優先してください。
-- `tests/` には手元画像や絶対パスに依存する実験スクリプトが残っています。CI 用テスト整備はリリース前課題です。
+- `uv run pytest` は外部画像不要の `tests/regression/` を実行します。従来のローカル画像依存スクリプトは自動収集対象外です。
 
 ## ライセンス
 

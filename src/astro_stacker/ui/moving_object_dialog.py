@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 from PySide6.QtCore import QDateTime, QObject, QSettings, Qt, QThread, Signal, Slot
@@ -30,6 +30,8 @@ from ..moving_object.capture_time import (
     apply_corrected_capture_starts,
     capture_midpoint,
     corrected_capture_starts,
+    capture_start_wall_time,
+    parse_timezone_offset,
 )
 from ..moving_object.catalog import SmallBodyCatalog
 from ..moving_object.ephemeris import HorizonsEphemeris
@@ -125,6 +127,7 @@ class MovingObjectSettingsDialog(QDialog):
         self._corrected_starts: dict[Path, datetime] = {}
         self._catalog_results: list[CatalogObject] = []
         self._ephemeris_ready = False
+        self._network_label = "通信処理"
 
         self.setWindowTitle("移動天体スタック設定")
         self.resize(1000, 760)
@@ -147,20 +150,56 @@ class MovingObjectSettingsDialog(QDialog):
         self.mode.setCurrentIndex(max(0, self.mode.findData(current_mode)))
         form.addRow("設定方法", self.mode)
 
-        first_midpoint = capture_midpoint(self.frames[0]) if self.frames else None
-        first_exposure = float(self.frames[0].info.exposure_time or 0.0) if self.frames else 0.0
-        first_start = (
-            first_midpoint - timedelta(seconds=first_exposure / 2.0)
-            if first_midpoint
-            else datetime.now(UTC)
+        first_frame = self.frames[0] if self.frames else None
+        first_camera_time = (
+            capture_start_wall_time(first_frame)
+            if first_frame is not None
+            else None
         )
+
+        if first_camera_time is None:
+            first_camera_time = datetime.now(UTC).replace(tzinfo=None)
+
+        self._first_camera_time = first_camera_time
+
+        self.timezone = QComboBox()
+        self._timezones = [
+            ("UTC (+00:00)", 0),
+            ("JST (+09:00)", 9 * 60 * 60),
+            ("UTC+01:00", 1 * 60 * 60),
+            ("UTC+02:00", 2 * 60 * 60),
+            ("UTC+03:00", 3 * 60 * 60),
+            ("UTC+04:00", 4 * 60 * 60),
+            ("UTC+05:00", 5 * 60 * 60),
+            ("UTC+06:00", 6 * 60 * 60),
+            ("UTC+07:00", 7 * 60 * 60),
+            ("UTC+08:00", 8 * 60 * 60),
+            ("UTC+10:00", 10 * 60 * 60),
+            ("UTC+11:00", 11 * 60 * 60),
+            ("UTC+12:00", 12 * 60 * 60),
+            ("UTC-01:00", -1 * 60 * 60),
+            ("UTC-02:00", -2 * 60 * 60),
+            ("UTC-03:00", -3 * 60 * 60),
+            ("UTC-04:00", -4 * 60 * 60),
+            ("UTC-05:00", -5 * 60 * 60),
+            ("UTC-06:00", -6 * 60 * 60),
+            ("UTC-07:00", -7 * 60 * 60),
+            ("UTC-08:00", -8 * 60 * 60),
+            ("UTC-09:00", -9 * 60 * 60),
+            ("UTC-10:00", -10 * 60 * 60),
+            ("UTC-11:00", -11 * 60 * 60),
+        ]
+
+        for label, offset_seconds in self._timezones:
+            self.timezone.addItem(label, offset_seconds)
+
+        self._set_initial_timezone()
+        self._first_start_utc = self._camera_time_to_utc(self._first_camera_time)
+
         self.first_time = QDateTimeEdit()
-        self.first_time.setDisplayFormat("yyyy-MM-dd HH:mm:ss.zzz 'UTC'")
-        self.first_time.setTimeSpec(Qt.TimeSpec.UTC)
-        qt_first_start = QDateTime.fromString(
-            first_start.isoformat(), Qt.DateFormat.ISODate
-        ).toUTC()
-        self.first_time.setDateTime(qt_first_start)
+        self.first_time.setDisplayFormat("yyyy-MM-dd HH:mm:ss.zzz")
+
+        self._set_first_time_display()
         self.frame_interval = QDoubleSpinBox()
         self.frame_interval.setRange(0.001, 86400.0)
         self.frame_interval.setDecimals(3)
@@ -168,10 +207,13 @@ class MovingObjectSettingsDialog(QDialog):
         self.frame_interval.setValue(self._estimated_interval())
         time_row = QHBoxLayout()
         time_row.addWidget(self.first_time, 1)
+        time_row.addWidget(QLabel("カメラ時刻"))
+        time_row.addWidget(self.timezone)
         time_row.addWidget(QLabel("不足時の間隔"))
         time_row.addWidget(self.frame_interval)
         self.apply_time_button = QPushButton("全画像へ反映")
         self.apply_time_button.clicked.connect(self._apply_time_correction)
+        self.timezone.currentIndexChanged.connect(self._timezone_changed)
         time_row.addWidget(self.apply_time_button)
         form.addRow("先頭画像の撮影開始", time_row)
 
@@ -208,6 +250,15 @@ class MovingObjectSettingsDialog(QDialog):
         self.downsample.setValue(self.app_settings.value("platesolve/downsample", 2, int))
         form.addRow("solve-field", self.executable)
         form.addRow("Downsample", self.downsample)
+        self.auto_downsample = QCheckBox("大画像の星抽出を自動縮小する")
+        self.auto_downsample.setChecked(
+            self.app_settings.value("platesolve/auto_downsample", True, bool)
+        )
+        self.auto_downsample.setToolTip(
+            "星抽出時の長辺を約2048画素以下にします。星が少なく解けない場合はオフにし、"
+            "Downsampleを1または2にしてください。WCSは元画像の座標で返します。"
+        )
+        form.addRow(self.auto_downsample)
         layout.addLayout(form)
 
         self.table = QTableWidget(len(self.frames), 6)
@@ -243,7 +294,7 @@ class MovingObjectSettingsDialog(QDialog):
             current_mode == MovingObjectMode.CATALOG
             and len(self.project.settings.moving_object.anchors) == len(self.frames)
         )
-        self.first_time.dateTimeChanged.connect(self._invalidate_ephemeris)
+        self.first_time.dateTimeChanged.connect(self._first_time_changed)
         self.frame_interval.valueChanged.connect(self._invalidate_ephemeris)
         self.catalog_results.currentIndexChanged.connect(self._invalidate_ephemeris)
         self._update_mode_widgets()
@@ -264,16 +315,15 @@ class MovingObjectSettingsDialog(QDialog):
         return max(0.001, exposure)
 
     def _apply_time_correction(self) -> None:
-        value = self.first_time.dateTime().toUTC().toPython()
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
         self._corrected_starts = corrected_capture_starts(
-            self.frames, value, self.frame_interval.value()
+            self.frames,
+            self._first_start_utc,
+            self.frame_interval.value(),
         )
         for row, frame in enumerate(self.frames):
             start = self._corrected_starts[frame.info.path]
             midpoint = start + timedelta(seconds=float(frame.info.exposure_time or 0.0) / 2.0)
-            self.table.item(row, self.TIME_COLUMN).setText(midpoint.isoformat())
+            self.table.item(row, self.TIME_COLUMN).setText(self._format_display_datetime(midpoint))
 
     def _restore_catalog_object(self) -> None:
         selected = self.project.settings.moving_object.catalog_object
@@ -311,15 +361,26 @@ class MovingObjectSettingsDialog(QDialog):
         worker = _NetworkWorker(operation)
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
-        worker.succeeded.connect(succeeded)
-        worker.failed.connect(lambda exc: QMessageBox.critical(self, f"{label}エラー", str(exc)))
+        worker.succeeded.connect(succeeded, Qt.ConnectionType.QueuedConnection)
+        worker.failed.connect(self._network_failed, Qt.ConnectionType.QueuedConnection)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._network_finished)
         self._thread = thread
         self._worker = worker
+        self._network_label = label
         thread.start()
+
+    @Slot(object)
+    def _network_failed(self, exc: Exception) -> None:
+        """Display worker failures on the GUI thread.
+
+        A bound QObject slot with an explicit queued connection is required here:
+        constructing QMessageBox from the network QThread crashes on macOS.
+        """
+        self.solve_status.setText(f"{self._network_label}失敗")
+        QMessageBox.critical(self, f"{self._network_label}エラー", str(exc))
 
     @Slot()
     def _network_finished(self) -> None:
@@ -330,7 +391,15 @@ class MovingObjectSettingsDialog(QDialog):
 
     def _search_catalog(self) -> None:
         self._ephemeris_ready = False
-        query = self.catalog_query.text()
+        query = self.catalog_query.text().strip()
+        if not query:
+            QMessageBox.information(
+                self,
+                "カタログ検索",
+                "彗星・小惑星の名称または符号を入力してください。",
+            )
+            self.catalog_query.setFocus()
+            return
         self._run_network(
             lambda: SmallBodyCatalog().search(query),
             self._catalog_search_succeeded,
@@ -408,7 +477,7 @@ class MovingObjectSettingsDialog(QDialog):
             self.table.setItem(row, self.FILE_COLUMN, name)
 
             midpoint = capture_midpoint(frame)
-            time_item = QTableWidgetItem(midpoint.isoformat() if midpoint else f"撮影順 {row + 1}")
+            time_item = QTableWidgetItem(self._format_display_datetime(midpoint) if midpoint else f"撮影順 {row + 1}")
             time_item.setFlags(time_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, self.TIME_COLUMN, time_item)
 
@@ -483,12 +552,14 @@ class MovingObjectSettingsDialog(QDialog):
         settings = PlateSolveSettings(
             executable=self.executable.text().strip() or "solve-field",
             downsample=self.downsample.value(),
+            auto_downsample=self.auto_downsample.isChecked(),
             center_ra_deg=ra_widget.value() if use_hint else None,
             center_dec_deg=dec_widget.value() if use_hint else None,
             search_radius_deg=8.0,
         )
         self.app_settings.setValue("platesolve/executable", settings.executable)
         self.app_settings.setValue("platesolve/downsample", settings.downsample)
+        self.app_settings.setValue("platesolve/auto_downsample", settings.auto_downsample)
 
         self.solve_button.setEnabled(False)
         self.solve_status.setText(f"実行中: {frame.info.path.name}")
@@ -595,3 +666,108 @@ class MovingObjectSettingsDialog(QDialog):
             QMessageBox.information(self, "処理中", "通信処理の完了を待ってください。")
             return
         super().reject()
+
+
+    def _timezone_changed(self, *_args) -> None:
+        """Change the timezone used to interpret the camera clock."""
+
+        if not hasattr(self, "_first_camera_time"):
+            return
+
+        offset_seconds = int(self.timezone.currentData() or 0)
+
+        # Keep the camera's wall-clock value unchanged.
+        self._first_start_utc = self._camera_time_to_utc(
+            self._first_camera_time
+        )
+
+        # The QDateTimeEdit continues to show the original camera clock.
+        self._set_first_time_display()
+
+        self._invalidate_ephemeris()
+
+        self.app_settings.setValue(
+            "moving_object/timezone_offset",
+            offset_seconds,
+        )
+
+    def _set_initial_timezone(self) -> None:
+        """Select the initial timezone from EXIF, falling back to JST."""
+        first_frame = self.frames[0] if self.frames else None
+
+        offset_seconds = None
+        if first_frame is not None:
+            metadata = first_frame.info.exif or {}
+            exif_timezone = parse_timezone_offset(
+                metadata.get("EXIF OffsetTimeOriginal")
+            )
+            if exif_timezone is not None:
+                offset_seconds = int(
+                    exif_timezone.utcoffset(None).total_seconds()
+                )
+
+        if offset_seconds is None:
+            offset_seconds = 9 * 60 * 60
+
+        index = self.timezone.findData(offset_seconds)
+        if index < 0:
+            index = self.timezone.findData(9 * 60 * 60)
+
+        if index >= 0:
+            self.timezone.setCurrentIndex(index)
+
+
+    def _format_display_datetime(self, value: datetime) -> str:
+        """Format a datetime in UTC."""
+        return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC"
+
+
+    def _set_first_time_display(self) -> None:
+        """Display the camera-recorded wall-clock time unchanged."""
+
+        value = self._first_camera_time
+
+        qdt = QDateTime.fromString(
+            value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "yyyy-MM-dd HH:mm:ss.zzz",
+        )
+
+        self.first_time.blockSignals(True)
+        try:
+            self.first_time.setDateTime(qdt)
+        finally:
+            self.first_time.blockSignals(False)
+
+
+    def _first_time_changed(self, *_args) -> None:
+        """Update the camera wall-clock time and its derived UTC instant."""
+
+        if not hasattr(self, "timezone"):
+            return
+
+        value = self.first_time.dateTime()
+
+        self._first_camera_time = datetime(
+            value.date().year(),
+            value.date().month(),
+            value.date().day(),
+            value.time().hour(),
+            value.time().minute(),
+            value.time().second(),
+            value.time().msec() * 1000,
+        )
+
+        self._first_start_utc = self._camera_time_to_utc(
+            self._first_camera_time
+        )
+
+        self._invalidate_ephemeris()
+
+
+    def _camera_time_to_utc(self, value: datetime) -> datetime:
+        """Interpret the camera wall-clock time using the selected timezone."""
+        offset_seconds = int(self.timezone.currentData() or 0)
+        selected_timezone = timezone(timedelta(seconds=offset_seconds))
+
+        local_value = value.replace(tzinfo=selected_timezone)
+        return local_value.astimezone(UTC)

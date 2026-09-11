@@ -4,7 +4,7 @@ import numpy as np
 from ..io.image_data import ScoreData
 from .fwhm import measure_fwhm
 from ..stars.star_data import StarCatalog
-from astropy.stats import sigma_clipped_stats
+from .detector import background_stats, to_luminance
 
 
 
@@ -20,8 +20,9 @@ class QualityAnalyzer:
     """
     
     def analyze_catalog(self, image: np.ndarray, catalog: StarCatalog, use_star_count_max: int):
+        image = to_luminance(image)
         star_count = len(catalog.stars)
-        top_catalog = catalog.brightest(use_star_count_max).stars
+        top_catalog = catalog.brightest(min(use_star_count_max, 50)).stars
 
         # Measure FWHM for brightest stars
         fwhms = np.array([measure_fwhm(image, c) for c in top_catalog], dtype=object)
@@ -29,7 +30,7 @@ class QualityAnalyzer:
         fwhms = np.array([f for f in fwhms if f is not None], dtype=np.float32)
         
         median_fwhm = float(np.median(fwhms)) if len(fwhms) > 0 else 0.0
-        _, _, background_noise = sigma_clipped_stats(image)
+        _, _, background_noise = background_stats(image)
         
         # Quality score: more stars and smaller FWHM = higher score
         score = star_count / (median_fwhm + 1e-6)

@@ -64,7 +64,7 @@
 ## 将来実装予定
 
 - Plate Solveパネルとastrometry.net連携
-- Drizzle倍率、クロップ、ホットピクセル除去の設定UI
+- クロップ範囲の設定UI（Drizzle倍率とBad Pixel補正はスタック設定に実装済み）
 - InfoPanelの詳細メタデータ表示
 - 言語切り替えの即時反映
 - 位置合わせのみ実行時のキャリブレーション完全反映
