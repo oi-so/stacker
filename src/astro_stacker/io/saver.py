@@ -93,7 +93,20 @@ def save_fits(
         data = np.moveaxis(data, -1, 0)
 
     if bit_depth == 16:
-        data_to_write = np.clip(data, 0, 65535).round().astype(np.uint16)
+        finite = data[np.isfinite(data)]
+
+        if finite.size == 0:
+            data_to_write = np.zeros_like(data, dtype=np.uint16)
+        elif float(np.nanmin(finite)) >= 0.0 and float(np.nanmax(finite)) <= 1.0:
+            data_to_write = (
+                np.clip(data, 0.0, 1.0) * 65535.0
+            ).round().astype(np.uint16)
+        else:
+            data_to_write = (
+                np.clip(data, 0.0, 65535.0)
+                .round()
+                .astype(np.uint16)
+            )
     else:
         data_to_write = data.astype(np.float32)
 
