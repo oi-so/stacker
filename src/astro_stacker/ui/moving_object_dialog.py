@@ -30,6 +30,8 @@ from ..moving_object.capture_time import (
     apply_corrected_capture_starts,
     capture_midpoint,
     corrected_capture_starts,
+    capture_start_wall_time,
+    parse_timezone_offset,
 )
 from ..moving_object.catalog import SmallBodyCatalog
 from ..moving_object.ephemeris import HorizonsEphemeris
@@ -148,20 +150,56 @@ class MovingObjectSettingsDialog(QDialog):
         self.mode.setCurrentIndex(max(0, self.mode.findData(current_mode)))
         form.addRow("設定方法", self.mode)
 
-        first_midpoint = capture_midpoint(self.frames[0]) if self.frames else None
-        first_exposure = float(self.frames[0].info.exposure_time or 0.0) if self.frames else 0.0
-        first_start = (
-            first_midpoint - timedelta(seconds=first_exposure / 2.0)
-            if first_midpoint
-            else datetime.now(UTC)
+        first_frame = self.frames[0] if self.frames else None
+        first_camera_time = (
+            capture_start_wall_time(first_frame)
+            if first_frame is not None
+            else None
         )
+
+        if first_camera_time is None:
+            first_camera_time = datetime.now(UTC).replace(tzinfo=None)
+
+        self._first_camera_time = first_camera_time
+
+        self.timezone = QComboBox()
+        self._timezones = [
+            ("UTC (+00:00)", 0),
+            ("JST (+09:00)", 9 * 60 * 60),
+            ("UTC+01:00", 1 * 60 * 60),
+            ("UTC+02:00", 2 * 60 * 60),
+            ("UTC+03:00", 3 * 60 * 60),
+            ("UTC+04:00", 4 * 60 * 60),
+            ("UTC+05:00", 5 * 60 * 60),
+            ("UTC+06:00", 6 * 60 * 60),
+            ("UTC+07:00", 7 * 60 * 60),
+            ("UTC+08:00", 8 * 60 * 60),
+            ("UTC+10:00", 10 * 60 * 60),
+            ("UTC+11:00", 11 * 60 * 60),
+            ("UTC+12:00", 12 * 60 * 60),
+            ("UTC-01:00", -1 * 60 * 60),
+            ("UTC-02:00", -2 * 60 * 60),
+            ("UTC-03:00", -3 * 60 * 60),
+            ("UTC-04:00", -4 * 60 * 60),
+            ("UTC-05:00", -5 * 60 * 60),
+            ("UTC-06:00", -6 * 60 * 60),
+            ("UTC-07:00", -7 * 60 * 60),
+            ("UTC-08:00", -8 * 60 * 60),
+            ("UTC-09:00", -9 * 60 * 60),
+            ("UTC-10:00", -10 * 60 * 60),
+            ("UTC-11:00", -11 * 60 * 60),
+        ]
+
+        for label, offset_seconds in self._timezones:
+            self.timezone.addItem(label, offset_seconds)
+
+        self._set_initial_timezone()
+        self._first_start_utc = self._camera_time_to_utc(self._first_camera_time)
+
         self.first_time = QDateTimeEdit()
-        self.first_time.setDisplayFormat("yyyy-MM-dd HH:mm:ss.zzz 'UTC'")
-        self.first_time.setTimeSpec(Qt.TimeSpec.UTC)
-        qt_first_start = QDateTime.fromString(
-            first_start.isoformat(), Qt.DateFormat.ISODate
-        ).toUTC()
-        self.first_time.setDateTime(qt_first_start)
+        self.first_time.setDisplayFormat("yyyy-MM-dd HH:mm:ss.zzz")
+
+        self._set_first_time_display()
         self.frame_interval = QDoubleSpinBox()
         self.frame_interval.setRange(0.001, 86400.0)
         self.frame_interval.setDecimals(3)
@@ -169,10 +207,13 @@ class MovingObjectSettingsDialog(QDialog):
         self.frame_interval.setValue(self._estimated_interval())
         time_row = QHBoxLayout()
         time_row.addWidget(self.first_time, 1)
+        time_row.addWidget(QLabel("カメラ時刻"))
+        time_row.addWidget(self.timezone)
         time_row.addWidget(QLabel("不足時の間隔"))
         time_row.addWidget(self.frame_interval)
         self.apply_time_button = QPushButton("全画像へ反映")
         self.apply_time_button.clicked.connect(self._apply_time_correction)
+        self.timezone.currentIndexChanged.connect(self._timezone_changed)
         time_row.addWidget(self.apply_time_button)
         form.addRow("先頭画像の撮影開始", time_row)
 
@@ -253,7 +294,7 @@ class MovingObjectSettingsDialog(QDialog):
             current_mode == MovingObjectMode.CATALOG
             and len(self.project.settings.moving_object.anchors) == len(self.frames)
         )
-        self.first_time.dateTimeChanged.connect(self._invalidate_ephemeris)
+        self.first_time.dateTimeChanged.connect(self._first_time_changed)
         self.frame_interval.valueChanged.connect(self._invalidate_ephemeris)
         self.catalog_results.currentIndexChanged.connect(self._invalidate_ephemeris)
         self._update_mode_widgets()
@@ -274,16 +315,15 @@ class MovingObjectSettingsDialog(QDialog):
         return max(0.001, exposure)
 
     def _apply_time_correction(self) -> None:
-        value = self.first_time.dateTime().toUTC().toPython()
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=UTC)
         self._corrected_starts = corrected_capture_starts(
-            self.frames, value, self.frame_interval.value()
+            self.frames,
+            self._first_start_utc,
+            self.frame_interval.value(),
         )
         for row, frame in enumerate(self.frames):
             start = self._corrected_starts[frame.info.path]
             midpoint = start + timedelta(seconds=float(frame.info.exposure_time or 0.0) / 2.0)
-            self.table.item(row, self.TIME_COLUMN).setText(midpoint.isoformat())
+            self.table.item(row, self.TIME_COLUMN).setText(self._format_display_datetime(midpoint))
 
     def _restore_catalog_object(self) -> None:
         selected = self.project.settings.moving_object.catalog_object
@@ -437,7 +477,7 @@ class MovingObjectSettingsDialog(QDialog):
             self.table.setItem(row, self.FILE_COLUMN, name)
 
             midpoint = capture_midpoint(frame)
-            time_item = QTableWidgetItem(midpoint.isoformat() if midpoint else f"撮影順 {row + 1}")
+            time_item = QTableWidgetItem(self._format_display_datetime(midpoint) if midpoint else f"撮影順 {row + 1}")
             time_item.setFlags(time_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
             self.table.setItem(row, self.TIME_COLUMN, time_item)
 
@@ -626,3 +666,108 @@ class MovingObjectSettingsDialog(QDialog):
             QMessageBox.information(self, "処理中", "通信処理の完了を待ってください。")
             return
         super().reject()
+
+
+    def _timezone_changed(self, *_args) -> None:
+        """Change the timezone used to interpret the camera clock."""
+
+        if not hasattr(self, "_first_camera_time"):
+            return
+
+        offset_seconds = int(self.timezone.currentData() or 0)
+
+        # Keep the camera's wall-clock value unchanged.
+        self._first_start_utc = self._camera_time_to_utc(
+            self._first_camera_time
+        )
+
+        # The QDateTimeEdit continues to show the original camera clock.
+        self._set_first_time_display()
+
+        self._invalidate_ephemeris()
+
+        self.app_settings.setValue(
+            "moving_object/timezone_offset",
+            offset_seconds,
+        )
+
+    def _set_initial_timezone(self) -> None:
+        """Select the initial timezone from EXIF, falling back to JST."""
+        first_frame = self.frames[0] if self.frames else None
+
+        offset_seconds = None
+        if first_frame is not None:
+            metadata = first_frame.info.exif or {}
+            exif_timezone = parse_timezone_offset(
+                metadata.get("EXIF OffsetTimeOriginal")
+            )
+            if exif_timezone is not None:
+                offset_seconds = int(
+                    exif_timezone.utcoffset(None).total_seconds()
+                )
+
+        if offset_seconds is None:
+            offset_seconds = 9 * 60 * 60
+
+        index = self.timezone.findData(offset_seconds)
+        if index < 0:
+            index = self.timezone.findData(9 * 60 * 60)
+
+        if index >= 0:
+            self.timezone.setCurrentIndex(index)
+
+
+    def _format_display_datetime(self, value: datetime) -> str:
+        """Format a datetime in UTC."""
+        return value.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3] + " UTC"
+
+
+    def _set_first_time_display(self) -> None:
+        """Display the camera-recorded wall-clock time unchanged."""
+
+        value = self._first_camera_time
+
+        qdt = QDateTime.fromString(
+            value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "yyyy-MM-dd HH:mm:ss.zzz",
+        )
+
+        self.first_time.blockSignals(True)
+        try:
+            self.first_time.setDateTime(qdt)
+        finally:
+            self.first_time.blockSignals(False)
+
+
+    def _first_time_changed(self, *_args) -> None:
+        """Update the camera wall-clock time and its derived UTC instant."""
+
+        if not hasattr(self, "timezone"):
+            return
+
+        value = self.first_time.dateTime()
+
+        self._first_camera_time = datetime(
+            value.date().year(),
+            value.date().month(),
+            value.date().day(),
+            value.time().hour(),
+            value.time().minute(),
+            value.time().second(),
+            value.time().msec() * 1000,
+        )
+
+        self._first_start_utc = self._camera_time_to_utc(
+            self._first_camera_time
+        )
+
+        self._invalidate_ephemeris()
+
+
+    def _camera_time_to_utc(self, value: datetime) -> datetime:
+        """Interpret the camera wall-clock time using the selected timezone."""
+        offset_seconds = int(self.timezone.currentData() or 0)
+        selected_timezone = timezone(timedelta(seconds=offset_seconds))
+
+        local_value = value.replace(tzinfo=selected_timezone)
+        return local_value.astimezone(UTC)
