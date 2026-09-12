@@ -619,7 +619,7 @@ class MainWindow(QMainWindow):
             self,
             f"{frame_type.ja_name}を追加",
             str(last_dialog_directory(self.settings)),
-            "Images (*.fits *.fit *.fts *.arw *.cr2 *.cr3 *.nef *.raf *.png *.jpg *.jpeg *.tif *.tiff)",
+            "Images (*.fits *.fit *.fts *.arw *.cr2 *.cr3 *.nef *.raf *.dng *.png *.jpg *.jpeg *.tif *.tiff)",
         )
         if paths:
             remember_dialog_path(self.settings, paths[0])
