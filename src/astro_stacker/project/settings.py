@@ -2,6 +2,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from ..core.resources import (
+    DISK_RESERVE_BYTES,
+    IMAGE_CACHE_BYTES,
+    STACK_DISK_BYTES,
+    STACK_MEMORY_BYTES,
+)
+
 
 class StackingMethod(StrEnum):
     AVERAGE = "average"
@@ -28,8 +35,8 @@ class StackingMethod(StrEnum):
 @dataclass
 class StackingSettings:
     method: StackingMethod = StackingMethod.AVERAGE
-    sigma: float = 3.0
-    iterations: int = 1
+    sigma: float = 2.0
+    iterations: int = 5
     use_weight_masks: bool = False
     use_quality_weights: bool = False
     exposure_normalization: bool = False
@@ -134,10 +141,19 @@ class AlignmentStrategy(StrEnum):
 
 @dataclass
 class TimelapseSettings:
-    window_size: int = 10
-    step: int = 10
-    include_partial: bool = True
-    alignment: AlignmentStrategy = AlignmentStrategy.NONE
+    window_size: int = 5
+    step: int = 1
+    include_partial: bool = False
+    alignment: AlignmentStrategy = AlignmentStrategy.STAR_GLOBAL
+
+
+@dataclass
+class ResourceSettings:
+    temp_directory: Path | None = None
+    image_cache_bytes: int = IMAGE_CACHE_BYTES
+    stack_memory_bytes: int = STACK_MEMORY_BYTES
+    stack_disk_bytes: int = STACK_DISK_BYTES
+    disk_reserve_bytes: int = DISK_RESERVE_BYTES
 
 
 class NightscapeOutput(StrEnum):
@@ -159,11 +175,29 @@ class GroundSource(StrEnum):
     SEPARATE_FRAMES = "separate_frames"
 
 
+class NightscapeCaptureMode(StrEnum):
+    """How the sky and ground source material was captured."""
+
+    FIXED = "fixed"
+    TRACKING = "tracking"
+
+
 @dataclass
 class NightscapeSettings:
     output: NightscapeOutput = NightscapeOutput.FINAL
     boundary_mode: BoundaryMode = BoundaryMode.GROUND_MASK
     ground_source: GroundSource = GroundSource.SAME_FRAMES
+    capture_mode: NightscapeCaptureMode = NightscapeCaptureMode.FIXED
+    # These paths deliberately live in the project manifest.  A mask or a
+    # separately photographed ground sequence should be reusable next time,
+    # rather than being a one-run dialog choice.
+    ground_frame_paths: list[Path] = field(default_factory=list)
+    ground_mask_path: Path | None = None
+    ground_use_single_frame: bool = False
+    ground_stack: StackingSettings = field(default_factory=StackingSettings)
+    # Empty means the legacy ``output`` choice controls exports.  New projects
+    # select exactly the products they need through the nightscape dialog.
+    enabled_outputs: set[str] = field(default_factory=set)
     star_alignment: bool = True
     ground_alignment: bool = False
     use_star_mask: bool = True
@@ -173,6 +207,8 @@ class NightscapeSettings:
     blur_scale: float = 32.0
     transition_width: float = 16.0
     background_strength: float = 0.25
+    smooth_boundary: bool = True
+    boundary_smoothing: str = "gaussian"
 
 
 @dataclass
@@ -197,6 +233,7 @@ class ProcessingOptions:
     )
     artifact_masks: ArtifactMaskSettings = field(default_factory=ArtifactMaskSettings)
     parallel_workers: int = 0
+    resources: ResourceSettings = field(default_factory=ResourceSettings)
 
 
 class AlignmentMode(StrEnum):
@@ -213,10 +250,13 @@ class ReferenceMode(StrEnum):
 class AlignmentSettings:
     max_stars: int = 500
     sigma: float = 5.0
+    star_fwhm: float = 4.0
     reference_mode: ReferenceMode = ReferenceMode.MIDDLE
     calibrate_before_align: bool = True
     use_wcs: bool = False
     mode: AlignmentMode = AlignmentMode.ALL
+    alignment_sharpness_min: float = 0.20
+    alignment_roundness_max: float = 0.50
 
 
 @dataclass

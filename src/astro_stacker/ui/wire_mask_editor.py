@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import cv2
 import numpy as np
 from PySide6.QtCore import QObject, QPointF, Qt, QThread, Signal
-from PySide6.QtGui import QColor, QMouseEvent, QPainter, QPen, QPolygonF
+from PySide6.QtGui import QColor, QImage, QMouseEvent, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -17,8 +20,10 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ..io.saver import save_fits
 from ..masks.artifacts import (
     detect_line_candidates,
+    painted_obstruction_weight_mask,
     polygon_weight_mask,
     polyline_weight_mask,
 )
@@ -33,7 +38,44 @@ class WireMaskViewer(ImageViewer):
         self.active_line = 0
         self._drag: tuple[int, int] | None = None
         self.display_width = 8.0
+        self.tool = "shape"
+        self.brush_size = 24.0
+        self.painted = np.zeros((1, 1), dtype=np.uint8)
+        self._paint_history: list[np.ndarray] = []
+        self._paint_redo: list[np.ndarray] = []
+        self._brush_cursor: QPointF | None = None
         self.setDragMode(self.DragMode.NoDrag)
+
+    def set_image(self, image: np.ndarray) -> None:
+        super().set_image(image)
+        self.painted = np.zeros(np.asarray(image).shape[:2], dtype=np.uint8)
+        self._paint_history.clear()
+        self._paint_redo.clear()
+
+    def set_tool(self, tool: str) -> None:
+        self.tool = tool
+        if tool not in {"paint", "erase"}:
+            self._brush_cursor = None
+        self.viewport().update()
+
+    def undo_paint(self) -> None:
+        if self._paint_history:
+            self._paint_redo.append(self.painted.copy())
+            self.painted = self._paint_history.pop()
+            self.viewport().update()
+
+    def redo_paint(self) -> None:
+        if self._paint_redo:
+            self._paint_history.append(self.painted.copy())
+            self.painted = self._paint_redo.pop()
+            self.viewport().update()
+
+    def _paint(self, point: QPointF, *, erase: bool) -> None:
+        value = 0 if erase else 255
+        cv2.circle(
+            self.painted, (round(point.x()), round(point.y())),
+            max(1, round(self.brush_size / 2)), value, -1, cv2.LINE_AA,
+        )
 
     def set_polylines(self, polylines, *, closed: bool = False) -> None:
         self.polylines = [
@@ -65,6 +107,9 @@ class WireMaskViewer(ImageViewer):
         self.polylines = [[]]
         self.closed = [False]
         self.active_line = 0
+        self._paint_history.append(self.painted.copy())
+        self._paint_redo.clear()
+        self.painted.fill(0)
         self.viewport().update()
 
     def _nearest(self, point: QPointF) -> tuple[int, int] | None:
@@ -82,6 +127,14 @@ class WireMaskViewer(ImageViewer):
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         point = self.mapToScene(event.position().toPoint())
+        if self.tool in {"paint", "erase"} and event.button() == Qt.MouseButton.LeftButton:
+            self._brush_cursor = point
+            self._paint_history.append(self.painted.copy())
+            self._paint_redo.clear()
+            self._paint(point, erase=self.tool == "erase")
+            self._drag = (-1, -1)
+            self.viewport().update()
+            return
         nearest = self._nearest(point)
         if event.button() == Qt.MouseButton.RightButton:
             if nearest is not None:
@@ -111,6 +164,11 @@ class WireMaskViewer(ImageViewer):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        self._brush_cursor = self.mapToScene(event.position().toPoint())
+        if self._drag == (-1, -1):
+            self._paint(self._brush_cursor, erase=self.tool == "erase")
+            self.viewport().update()
+            return
         if self._drag is not None:
             line_index, point_index = self._drag
             self.polylines[line_index][point_index] = self.mapToScene(event.position().toPoint())
@@ -121,6 +179,11 @@ class WireMaskViewer(ImageViewer):
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag = None
         super().mouseReleaseEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        self._brush_cursor = None
+        self.viewport().update()
+        super().leaveEvent(event)
 
     def drawForeground(self, painter: QPainter, rect) -> None:
         super().drawForeground(painter, rect)
@@ -134,6 +197,22 @@ class WireMaskViewer(ImageViewer):
         for line in self.polylines:
             for point in line:
                 painter.drawEllipse(point, 4, 4)
+        if np.any(self.painted):
+            image = QImage(
+                self.painted.data, self.painted.shape[1], self.painted.shape[0],
+                self.painted.strides[0], QImage.Format.Format_Grayscale8,
+            )
+            painter.setOpacity(0.35)
+            painter.drawImage(0, 0, image)
+            painter.setOpacity(1.0)
+        if self.tool in {"paint", "erase"} and self._brush_cursor is not None:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(255, 255, 255, 220), 2, Qt.PenStyle.DashLine))
+            painter.drawEllipse(
+                self._brush_cursor,
+                self.brush_size / 2,
+                self.brush_size / 2,
+            )
 
 
 class LineDetectionWorker(QObject):
@@ -173,7 +252,8 @@ class WireMaskEditorDialog(QDialog):
         layout.addWidget(self.viewer, 1)
         self.status = QLabel(
             "電線は一本ごとに「新しい線」、電柱や面状障害物は「新しい面」を選びます。"
-            "左クリック: 点追加・ドラッグ / 右クリック: 点削除。"
+            "ブラシでは不規則な枝・建物・写り込みも直接塗れます。"
+            "形状編集は左クリック: 点追加・ドラッグ / 右クリック: 点削除。"
         )
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -185,12 +265,32 @@ class WireMaskEditorDialog(QDialog):
         new_area.clicked.connect(self.viewer.new_area)
         self.detect_button = QPushButton("電線候補を検出")
         self.detect_button.clicked.connect(self._detect)
+        self.tool = QComboBox()
+        self.tool.addItem("線・面を編集", "shape")
+        self.tool.addItem("ブラシで障害物を塗る", "paint")
+        self.tool.addItem("ブラシで塗りを消す", "erase")
+        self.tool.currentIndexChanged.connect(self._update_tool_widgets)
+        self.brush = QDoubleSpinBox()
+        self.brush.setRange(2, 2000)
+        self.brush.setValue(24)
+        self.brush.setSuffix(" px ブラシ直径")
+        self.brush.setToolTip(
+            "ブラシで塗る範囲の直径です。カーソル位置に円で表示されます。"
+        )
+        self.brush.valueChanged.connect(lambda value: setattr(self.viewer, "brush_size", value))
+        self.undo_paint_button = QPushButton("ブラシ Undo")
+        self.undo_paint_button.clicked.connect(self.viewer.undo_paint)
+        self.redo_paint_button = QPushButton("ブラシ Redo")
+        self.redo_paint_button.clicked.connect(self.viewer.redo_paint)
         clear = QPushButton("すべて消去")
         clear.clicked.connect(self.viewer.clear_shapes)
         self.width = QDoubleSpinBox()
         self.width.setRange(1, 2000)
         self.width.setValue(line_width)
-        self.width.setSuffix(" px 幅")
+        self.width.setSuffix(" px 線幅")
+        self.width.setToolTip(
+            "線・面ツールで作成する形状の太さです。ブラシの大きさとは別に設定します。"
+        )
         self.width.valueChanged.connect(self._width_changed)
         self.feather = QDoubleSpinBox()
         self.feather.setRange(0, 100)
@@ -210,14 +310,33 @@ class WireMaskEditorDialog(QDialog):
                 "追尾・位置合わせ撮影です。障害物はフレームごとに位置が変わるため、"
                 "このLightだけにマスクを登録します。新しく現れた障害物も該当Lightで追加してください。"
             )
+        fit = QPushButton("Fit")
+        fit.clicked.connect(self.viewer.fit_image)
+        zoom_100 = QPushButton("100%")
+        zoom_100.clicked.connect(lambda: self.viewer.set_zoom(100))
+        zoom_out = QPushButton("-")
+        zoom_out.clicked.connect(lambda: self.viewer.zoom_by_factor(0.8))
+        zoom_in = QPushButton("+")
+        zoom_in.clicked.connect(lambda: self.viewer.zoom_by_factor(1.25))
+        fits = QPushButton("FITS保存")
+        fits.clicked.connect(self._save_fits)
         for widget in (
             new_line,
             new_area,
             self.detect_button,
+            self.tool,
+            self.brush,
+            self.undo_paint_button,
+            self.redo_paint_button,
             clear,
             self.width,
             self.feather,
             self.apply_to_all,
+            fit,
+            zoom_100,
+            zoom_out,
+            zoom_in,
+            fits,
         ):
             controls.addWidget(widget)
         controls.addStretch()
@@ -225,6 +344,7 @@ class WireMaskEditorDialog(QDialog):
         self.detection_progress = QProgressBar()
         self.detection_progress.setVisible(False)
         layout.addWidget(self.detection_progress)
+        self._update_tool_widgets()
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -237,6 +357,22 @@ class WireMaskEditorDialog(QDialog):
     def _width_changed(self, value: float) -> None:
         self.viewer.display_width = value
         self.viewer.viewport().update()
+
+    def _save_fits(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "障害物マスクをFITS保存", "artifact_mask.fits", "FITS (*.fits)"
+        )
+        if path:
+            save_fits(self.mask(), path, frame_type="artifact_mask")
+
+    def _update_tool_widgets(self) -> None:
+        tool = self.tool.currentData()
+        brush_mode = tool in {"paint", "erase"}
+        self.viewer.set_tool(tool)
+        self.brush.setEnabled(brush_mode)
+        self.undo_paint_button.setEnabled(brush_mode)
+        self.redo_paint_button.setEnabled(brush_mode)
+        self.width.setEnabled(not brush_mode)
 
     def _detect(self) -> None:
         if self._detect_thread is not None:
@@ -288,7 +424,7 @@ class WireMaskEditorDialog(QDialog):
         if self._detect_thread is not None:
             self.status.setText("候補解析が終わるまでお待ちください。")
             return
-        valid = any(
+        valid = np.any(self.viewer.painted) or any(
             len(line) >= (3 if closed else 2)
             for line, closed in zip(
                 self.viewer.polylines, self.viewer.closed, strict=True
@@ -323,4 +459,7 @@ class WireMaskEditorDialog(QDialog):
         area_mask = polygon_weight_mask(
             self.image.shape[:2], polygons, feather=self.feather.value()
         )
-        return np.multiply(line_mask, area_mask, dtype=np.float32)
+        paint_mask = painted_obstruction_weight_mask(
+            self.viewer.painted, feather=self.feather.value()
+        )
+        return np.multiply(np.multiply(line_mask, area_mask), paint_mask, dtype=np.float32)

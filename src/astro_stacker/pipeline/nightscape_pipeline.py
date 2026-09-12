@@ -8,18 +8,19 @@ import numpy as np
 
 from ..analysis.motion import GroupSuggestion, analyze_motion, suggest_time_groups
 from ..core.frame_provider import FrameProvider
-from ..ground.alignment import GroundAligner
-from ..ground.provider import GroundAlignedFrameProvider
 from ..io.image_data import AstroImage
 from ..io.saver import save_image
 from ..masks.weights import (
-    AlignedMaskProvider,
     AlignmentValidityMaskProvider,
-    ArrayMaskProvider,
-    CompositeMaskProvider,
 )
 from ..nightscape.composite import composite_nightscape, light_pollution_frame
-from ..project.settings import BoundaryMode, NightscapeOutput, NightscapeSettings, StackingSettings
+from ..project.settings import (
+    BoundaryMode,
+    NightscapeOutput,
+    NightscapeSettings,
+    ResourceSettings,
+    StackingSettings,
+)
 from ..stacking.combiner import ImageCombiner
 
 
@@ -61,6 +62,7 @@ class NightscapePipeline:
         suffix: str = ".fits",
         progress=None,
         is_cancelled=None,
+        resource_settings: ResourceSettings | None = None,
     ) -> NightscapeResult:
         if not sky_frames or not ground_frames:
             raise ValueError("Nightscape requires sky and ground frames")
@@ -69,6 +71,7 @@ class NightscapePipeline:
         if mask.shape != shape:
             raise ValueError("Nightscape mask does not match sky frame dimensions")
         result = NightscapeResult()
+        resource_settings = resource_settings or ResourceSettings()
         if settings.output == NightscapeOutput.MASK_ONLY:
             result.products["ground_mask"] = mask
             if star_mask is not None:
@@ -92,17 +95,19 @@ class NightscapePipeline:
         if 0 < split_index < len(sky_frames):
             groups = [sky_frames[:split_index], sky_frames[split_index:]]
 
-        base_mask = ArrayMaskProvider(lambda _: mask)
-        if settings.star_alignment:
-            mask_provider = CompositeMaskProvider(
-                [AlignedMaskProvider(base_mask), AlignmentValidityMaskProvider()]
-            )
-        else:
-            mask_provider = base_mask
+        # Sky material is full-frame.  The ground mask belongs to the final
+        # composite and must not black out the horizon during sky stacking.
+        mask_provider = AlignmentValidityMaskProvider() if settings.star_alignment else None
         sky_stacks = []
         sky_validity = []
         for index, group in enumerate(groups, 1):
-            combiner = ImageCombiner(self.sky_provider)
+            combiner = ImageCombiner(
+                self.sky_provider,
+                memory_limit=resource_settings.stack_memory_bytes,
+                disk_limit=resource_settings.stack_disk_bytes,
+                disk_reserve=resource_settings.disk_reserve_bytes,
+                temp_dir=resource_settings.temp_directory,
+            )
             stack = combiner.combine(
                 group,
                 stack_settings.method,
@@ -117,31 +122,23 @@ class NightscapePipeline:
             sky_stacks.append(stack)
             sky_validity.append(combiner.last_valid_mask)
             result.products[f"sky_stack_{chr(64 + index)}"] = stack
-        sky, _ = _merge_group_stacks(sky_stacks, sky_validity)
+        sky, sky_validity_mask = _merge_group_stacks(sky_stacks, sky_validity)
         result.products["merged_sky"] = sky
 
-        if settings.ground_alignment and len(ground_frames) > 1:
-            reference = ground_frames[len(ground_frames) // 2]
-            reference_data = self.ground_provider.get_image(reference)
-            aligner = GroundAligner(model="similarity")
-            transforms = {reference.info.path: np.eye(3)}
-            for index, frame in enumerate(ground_frames, 1):
-                if is_cancelled and is_cancelled():
-                    raise InterruptedError("Nightscape ground alignment cancelled")
-                if frame.info.path != reference.info.path:
-                    measured = aligner.align(
-                        self.ground_provider.get_image(frame), reference_data, 1.0 - mask
-                    )
-                    transforms[frame.info.path] = measured.matrix
-                if progress:
-                    progress("新星景 地上位置合わせ", index, len(ground_frames), frame.info.path.name)
-            ground_provider = GroundAlignedFrameProvider(self.ground_provider, transforms)
-        else:
-            ground_provider = self.ground_provider
-        ground = ImageCombiner(ground_provider).combine(
+        # Ground material is intentionally never aligned.  Both fixed-camera
+        # and tracking workflows use a fixed ground sequence; aligning it here
+        # bends buildings and contradicts the material selection made by user.
+        ground_settings = settings.ground_stack
+        ground = ImageCombiner(
+            self.ground_provider,
+            memory_limit=resource_settings.stack_memory_bytes,
+            disk_limit=resource_settings.stack_disk_bytes,
+            disk_reserve=resource_settings.disk_reserve_bytes,
+            temp_dir=resource_settings.temp_directory,
+        ).combine(
             ground_frames,
-            stack_settings.method,
-            stack_settings,
+            ground_settings.method,
+            ground_settings,
             progress=progress,
             is_cancelled=is_cancelled,
             combine_msg="新星景 地上Stack",
@@ -151,18 +148,21 @@ class NightscapePipeline:
         if ground.shape != sky.shape:
             raise ValueError("Sky and ground materials must have identical dimensions")
         result.products["ground_stack"] = ground
+        if settings.ground_use_single_frame:
+            result.products["ground_image"] = ground
         result.products["ground_mask"] = mask
         if star_mask is not None:
             result.products["star_mask"] = star_mask
         pollution = None
-        composite_mask = mask
-        if settings.boundary_mode == BoundaryMode.LIGHT_POLLUTION:
+        composite_mask = mask * sky_validity_mask
+        if settings.smooth_boundary and settings.boundary_smoothing == "gaussian":
             composite_mask = cv2.GaussianBlur(
-                mask,
+                composite_mask,
                 (0, 0),
                 max(0.1, float(settings.transition_width)),
                 borderType=cv2.BORDER_REFLECT,
             )
+        if settings.boundary_mode == BoundaryMode.LIGHT_POLLUTION:
             pollution = light_pollution_frame(ground, star_mask, blur_scale=settings.blur_scale)
             result.products["light_pollution_frame"] = pollution
         if settings.output == NightscapeOutput.FINAL:
@@ -177,13 +177,16 @@ class NightscapePipeline:
             result.products["final_composite"] = final
             result.products["protected_ground_mask"] = protected
 
-        allowed = {
+        legacy_allowed = {
             NightscapeOutput.SKY_ONLY: {"merged_sky"},
-            NightscapeOutput.GROUND_ONLY: {"ground_stack"},
+            NightscapeOutput.GROUND_ONLY: {"ground_image", "ground_stack"},
             NightscapeOutput.MASK_ONLY: {"ground_mask", "star_mask"},
             NightscapeOutput.MATERIALS: set(result.products),
             NightscapeOutput.FINAL: set(result.products),
         }[settings.output]
+        # A checked product list is the current UI's explicit export contract.
+        # Retain the old output enum for projects written by older releases.
+        allowed = settings.enabled_outputs or legacy_allowed
         if output_directory is not None:
             for name, product in result.products.items():
                 if name not in allowed:

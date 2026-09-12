@@ -4,17 +4,22 @@ Applies calibration frames (dark, bias, flat, flat-dark) to remove
 electronic noise and optical effects from light frames.
 """
 
-from dataclasses import dataclass
 import logging
+from collections.abc import Iterable
+from dataclasses import dataclass
+
 import numpy as np
 
-from ..io.image_data import AstroImage
 from ..core.frame_provider import FrameProvider
+from ..io.image_data import AstroImage
 from ..project.project import Project
-from ..project.settings import CalibrationSettings, StackingMethod, StackingSettings
+from ..project.settings import (
+    CalibrationSettings,
+    ResourceSettings,
+    StackingMethod,
+    StackingSettings,
+)
 from ..stacking.combiner import ImageCombiner
-
-from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -89,9 +94,16 @@ def sigma_clip():
 
 
 class MasterFrameBuilder:
-    def __init__(self, provider: FrameProvider):
+    def __init__(self, provider: FrameProvider, resources: ResourceSettings | None = None):
         self.provider = provider
-        self.combiner = ImageCombiner(provider)
+        resources = resources or ResourceSettings()
+        self.combiner = ImageCombiner(
+            provider,
+            memory_limit=resources.stack_memory_bytes,
+            disk_limit=resources.stack_disk_bytes,
+            disk_reserve=resources.disk_reserve_bytes,
+            temp_dir=resources.temp_directory,
+        )
 
     def build(self, images: list[AstroImage], method: StackingMethod = StackingMethod.AVERAGE, settings: StackingSettings | None = None, progress = None, is_cancelled=None, master_type=None) -> np.ndarray | None:
         if master_type is None: master_type = "スタック画像"

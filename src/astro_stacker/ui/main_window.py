@@ -32,7 +32,13 @@ from PySide6.QtWidgets import (
 from ..alignment.transform import AlignedFrameProvider, ImageTransformer
 from ..analysis.motion import analyze_motion, suggest_time_groups
 from ..calibration.bad_pixels import detect_bad_pixels
-from ..core.provider import ImageManagerProvider, PreviewProvider, PreviewSettings
+from ..core.provider import (
+    CalibratedFrameProvider,
+    DebayerFrameProvider,
+    ImageManagerProvider,
+    PreviewProvider,
+    PreviewSettings,
+)
 from ..export.aligned import export_aligned_frames
 from ..ground.mask import estimate_ground_mask
 from ..io.image_manager import ImageManager
@@ -257,7 +263,7 @@ class MainWindow(QMainWindow):
         self.bad_pixels_action.triggered.connect(self._create_bad_pixel_map)
         self.artifact_mask_action = QAction("電線・電柱・障害物マスクを作成...", self)
         self.artifact_mask_action.triggered.connect(self._create_artifact_mask)
-        self.nightscape_action = QAction("新星景...", self)
+        self.nightscape_action = QAction("新星景スタック設定...", self)
         self.nightscape_action.triggered.connect(self._run_nightscape)
 
         self.add_action.triggered.connect(
@@ -275,6 +281,7 @@ class MainWindow(QMainWindow):
             self.star_mask_action,
             self.ground_mask_action,
             self.bad_pixels_action,
+            self.artifact_mask_action,
         )
 
     def _stack_actions(self):
@@ -283,7 +290,6 @@ class MainWindow(QMainWindow):
             self.hdr_action,
             self.nightscape_action,
             self.timelapse_action,
-            self.artifact_mask_action,
         )
 
     def _create_toolbar(self):
@@ -494,6 +500,9 @@ class MainWindow(QMainWindow):
             self.manager.unload_all()
             self.preview_provider.clear()
             self.controller.project = project
+            self.manager.configure_cache(
+                project.settings.processing.resources.image_cache_bytes
+            )
             self._selected_frame = None
             def reference_changed(image):
                 self.project_tree.update_reference_image_display(image)
@@ -610,7 +619,7 @@ class MainWindow(QMainWindow):
             self,
             f"{frame_type.ja_name}を追加",
             str(last_dialog_directory(self.settings)),
-            "Images (*.fits *.fit *.fts *.arw *.cr2 *.cr3 *.nef *.raf *.png *.jpg *.jpeg *.tif *.tiff)",
+            "Images (*.fits *.fit *.fts *.arw *.cr2 *.cr3 *.nef *.raf *.dng *.png *.jpg *.jpeg *.tif *.tiff)",
         )
         if paths:
             remember_dialog_path(self.settings, paths[0])
@@ -767,6 +776,9 @@ class MainWindow(QMainWindow):
     def _run_stacking(self):
         if not self._show_stack_dialog():
             return
+        self.manager.configure_cache(
+            self.controller.project.settings.processing.resources.image_cache_bytes
+        )
 
         def work(progress, is_cancelled):
             ProcessingPipeline(self.manager).run(self.controller.project, progress=progress, is_cancelled=is_cancelled)
@@ -788,7 +800,10 @@ class MainWindow(QMainWindow):
         if dialog.exec() != SaveDialog.DialogCode.Accepted:
             return
         sample_path, options = dialog.selected()
-        provider = AlignedFrameProvider(ImageManagerProvider(self.manager), ImageTransformer())
+        provider = AlignedFrameProvider(
+            DebayerFrameProvider(ImageManagerProvider(self.manager)),
+            ImageTransformer(),
+        )
 
         def work(progress, is_cancelled):
             export_aligned_frames(
@@ -839,11 +854,16 @@ class MainWindow(QMainWindow):
         if len(project.get_alignment_sessions()) != 1:
             QMessageBox.warning(self, "HDR", "全画像を同じ参照画像へ位置合わせしてください。")
             return
+        if not self._show_stack_dialog(use_aligned_image=True):
+            return
         dialog = HDRSettingsDialog(project, frames[0].info.path.parent, self)
         if dialog.exec() != HDRSettingsDialog.DialogCode.Accepted:
             return
         output, suffix = dialog.selected()
-        provider = AlignedFrameProvider(ImageManagerProvider(self.manager), ImageTransformer())
+        provider = AlignedFrameProvider(
+            DebayerFrameProvider(ImageManagerProvider(self.manager)),
+            ImageTransformer(),
+        )
         holder = {}
 
         def work(progress, is_cancelled):
@@ -856,6 +876,7 @@ class MainWindow(QMainWindow):
                 progress=progress,
                 is_cancelled=is_cancelled,
                 requested_workers=project.settings.processing.parallel_workers,
+                resource_settings=project.settings.processing.resources,
             )
 
         def succeeded():
@@ -876,13 +897,15 @@ class MainWindow(QMainWindow):
                 self, "タイムラプス", "ライトフレームを追加してください。"
             )
             return
+        if not self._show_stack_dialog():
+            return
         dialog = TimelapseSettingsDialog(project, frames[0].info.path.parent, self)
         if dialog.exec() != TimelapseSettingsDialog.DialogCode.Accepted:
             return
         output, suffix = dialog.selected()
         settings = project.settings.processing.timelapse
-        provider = ImageManagerProvider(self.manager)
-        if settings.alignment.value == "star_global":
+        provider = DebayerFrameProvider(ImageManagerProvider(self.manager))
+        if getattr(settings.alignment, "value", settings.alignment) == "star_global":
             if not all(frame.info.is_aligned for frame in frames):
                 QMessageBox.information(
                     self, "タイムラプス", "共通星座標モードでは先に全画像を位置合わせしてください。"
@@ -900,6 +923,7 @@ class MainWindow(QMainWindow):
                 progress=progress,
                 is_cancelled=is_cancelled,
                 requested_workers=project.settings.processing.parallel_workers,
+                resource_settings=project.settings.processing.resources,
             )
 
         self._run_worker(work, on_success=lambda: logger.info("タイムラプス素材を出力しました"))
@@ -909,13 +933,29 @@ class MainWindow(QMainWindow):
             ParallelSettingsDialog(self.controller.project, self).exec()
             == ParallelSettingsDialog.DialogCode.Accepted
         ):
+            self.manager.configure_cache(
+                self.controller.project.settings.processing.resources.image_cache_bytes
+            )
             self._mark_dirty()
+
+    @staticmethod
+    def _unique_output_directory(path: Path) -> Path:
+        if not path.exists():
+            return path
+        index = 2
+        while True:
+            candidate = path.with_name(f"{path.name}{index}")
+            if not candidate.exists():
+                return candidate
+            index += 1
 
     def _run_nightscape(self):
         project = self.controller.project
         sky_frames = [frame for frame in project.light_frames if frame.info.enabled]
         if not sky_frames:
             QMessageBox.information(self, "新星景", "ライトフレームを追加してください。")
+            return
+        if not self._show_stack_dialog():
             return
         suggestion = None
         try:
@@ -929,7 +969,15 @@ class MainWindow(QMainWindow):
             return
         output, suffix, ground_paths, user_mask_path = dialog.selected()
         settings = project.settings.processing.nightscape
-        base_provider = ImageManagerProvider(self.manager)
+        output = self._unique_output_directory(output)
+        self._mark_dirty()
+        processing = ProcessingPipeline(self.manager)
+        prepared_provider, calibrator, calibrate_before_align, cosmetic = (
+            processing._prepare_alignment_provider(project)
+        )
+        if not calibrate_before_align and not cosmetic.enabled:
+            prepared_provider = CalibratedFrameProvider(prepared_provider, calibrator)
+        base_provider = DebayerFrameProvider(prepared_provider)
         if settings.star_alignment:
             if not all(frame.info.is_aligned for frame in sky_frames):
                 QMessageBox.warning(self, "新星景", "星空処理の前に全画像を位置合わせしてください。")
@@ -938,7 +986,7 @@ class MainWindow(QMainWindow):
         else:
             sky_provider = base_provider
         reference = project.reference_image or sky_frames[len(sky_frames) // 2]
-        reference_image = self.manager.get_image(reference)
+        reference_image = base_provider.get_image(reference)
         if settings.boundary_mode == BoundaryMode.USER_MASK:
             mask_frame = load_info(user_mask_path)
             sky_mask = np.squeeze(self.manager.get_image(mask_frame)).astype(np.float32)
@@ -953,10 +1001,18 @@ class MainWindow(QMainWindow):
             if editor.exec() != GroundMaskEditorDialog.DialogCode.Accepted:
                 return
             sky_mask = editor.mask()
+            enabled_outputs = settings.enabled_outputs
+            if (
+                output
+                and (not enabled_outputs or "ground_mask" in enabled_outputs)
+            ):
+                settings.ground_mask_path = output / f"ground_mask{suffix}"
         if settings.ground_source == GroundSource.SEPARATE_FRAMES:
             ground_frames = [load_info(path) for path in ground_paths]
         else:
             ground_frames = sky_frames
+        if settings.ground_use_single_frame:
+            ground_frames = ground_frames[:1]
         star_mask = None
         if settings.use_star_mask and reference.info.stars.all_stars is not None:
             star_mask = generate_star_mask(
@@ -978,6 +1034,7 @@ class MainWindow(QMainWindow):
                 suffix=suffix,
                 progress=progress,
                 is_cancelled=is_cancelled,
+                resource_settings=project.settings.processing.resources,
             )
 
         def succeeded():
@@ -1021,6 +1078,8 @@ class MainWindow(QMainWindow):
                 return
             path, options = dialog.selected()
             save_image(editor.mask(), path, metadata=frame.info.exif, **options)
+            self.controller.project.settings.processing.nightscape.ground_mask_path = path
+            self._mark_dirty()
             logger.info("地上マスクを保存しました: %s", path)
 
         self._run_worker(work, on_success=succeeded)
