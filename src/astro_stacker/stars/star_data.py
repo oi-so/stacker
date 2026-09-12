@@ -66,6 +66,7 @@ class StarCatalog:
         width: int | None = None,
         height: int | None = None,
         grid_size: int = 6,
+        min_separation: float | None = None,
     ) -> "StarCatalog":
         """Return bright, point-like candidates suitable for alignment.
 
@@ -82,29 +83,29 @@ class StarCatalog:
             and abs(star.roundness) <= maximum_abs_roundness
         ]
         candidates.sort(key=lambda star: star.flux, reverse=True)
-        if width is None or height is None or len(candidates) <= n:
+
+        if not candidates:
             return StarCatalog(candidates[:n])
 
-        # Pick one strong candidate per occupied cell before filling the
-        # remaining budget. This prevents a bright nebula core from consuming
-        # every alignment slot and keeps outer-field stars available.
-        grid_size = max(1, int(grid_size))
-        cells: dict[tuple[int, int], list[Star]] = {}
-        for star in candidates:
-            column = min(grid_size - 1, max(0, int(star.x / width * grid_size)))
-            row = min(grid_size - 1, max(0, int(star.y / height * grid_size)))
-            cells.setdefault((row, column), []).append(star)
+        if width and height and min_separation is None:
+            # A dense cluster (e.g. a bright nebula core) must not be able to
+            # contribute more than one alignment anchor: cap it by distance,
+            # not by which grid cell it happens to fall in.
+            grid_size = max(1, int(grid_size))
+            min_separation = max(width, height) / (grid_size * 2)
 
+        if min_separation is None or min_separation <= 0:
+            return StarCatalog(candidates[:n])
+
+        min_sep_sq = min_separation ** 2
         selected: list[Star] = []
-        for cell in cells.values():
-            if len(selected) >= n:
-                break
-            selected.append(cell[0])
-        selected_ids = {id(star) for star in selected}
         for star in candidates:
             if len(selected) >= n:
                 break
-            if id(star) not in selected_ids:
+            if all(
+                (star.x - s.x) ** 2 + (star.y - s.y) ** 2 >= min_sep_sq
+                for s in selected
+            ):
                 selected.append(star)
-                selected_ids.add(id(star))
+
         return StarCatalog(selected)
