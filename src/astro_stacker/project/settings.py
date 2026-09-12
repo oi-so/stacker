@@ -141,10 +141,10 @@ class AlignmentStrategy(StrEnum):
 
 @dataclass
 class TimelapseSettings:
-    window_size: int = 10
-    step: int = 10
-    include_partial: bool = True
-    alignment: AlignmentStrategy = AlignmentStrategy.NONE
+    window_size: int = 5
+    step: int = 1
+    include_partial: bool = False
+    alignment: AlignmentStrategy = AlignmentStrategy.STAR_GLOBAL
 
 
 @dataclass
