@@ -106,7 +106,7 @@ class HDRPipeline:
             _save_product(result, name, stack, output_directory, suffix, metadata, bit_depth)
             exposure_stacks.append(stack)
             iso_gain = (group.iso / 100.0) if group.iso else 1.0
-            f_gain = (group.f_number / 1.0) ** 2 if group.f_number else 1.0
+            f_gain = (1.0 / group.f_number) ** 2 if group.f_number else 1.0
             exposure_times.append(group.exposure_time * iso_gain * f_gain)
         if hdr_settings.stop_after == HDRStopAfter.EXPOSURE_STACKS:
             return result
@@ -117,6 +117,11 @@ class HDRPipeline:
             white_level=hdr_settings.white_level,
             is_cancelled=is_cancelled,
         )
+        finite = hdr[np.isfinite(hdr)]
+        if finite.size:
+            reference = float(np.percentile(finite, 99.5))
+            if reference > 0:
+                hdr = hdr / reference * 0.5 
         _save_product(result, "hdr_linear", hdr, output_directory, suffix, {"HDR": True}, bit_depth)
         result.products["hdr_validity_mask"] = validity
         if hdr_settings.stop_after == HDRStopAfter.TONE_MAP:
