@@ -2,6 +2,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from ..core.resources import (
+    DISK_RESERVE_BYTES,
+    IMAGE_CACHE_BYTES,
+    STACK_DISK_BYTES,
+    STACK_MEMORY_BYTES,
+)
+
 
 class StackingMethod(StrEnum):
     AVERAGE = "average"
@@ -140,6 +147,15 @@ class TimelapseSettings:
     alignment: AlignmentStrategy = AlignmentStrategy.NONE
 
 
+@dataclass
+class ResourceSettings:
+    temp_directory: Path | None = None
+    image_cache_bytes: int = IMAGE_CACHE_BYTES
+    stack_memory_bytes: int = STACK_MEMORY_BYTES
+    stack_disk_bytes: int = STACK_DISK_BYTES
+    disk_reserve_bytes: int = DISK_RESERVE_BYTES
+
+
 class NightscapeOutput(StrEnum):
     SKY_ONLY = "sky_only"
     GROUND_ONLY = "ground_only"
@@ -159,11 +175,29 @@ class GroundSource(StrEnum):
     SEPARATE_FRAMES = "separate_frames"
 
 
+class NightscapeCaptureMode(StrEnum):
+    """How the sky and ground source material was captured."""
+
+    FIXED = "fixed"
+    TRACKING = "tracking"
+
+
 @dataclass
 class NightscapeSettings:
     output: NightscapeOutput = NightscapeOutput.FINAL
     boundary_mode: BoundaryMode = BoundaryMode.GROUND_MASK
     ground_source: GroundSource = GroundSource.SAME_FRAMES
+    capture_mode: NightscapeCaptureMode = NightscapeCaptureMode.FIXED
+    # These paths deliberately live in the project manifest.  A mask or a
+    # separately photographed ground sequence should be reusable next time,
+    # rather than being a one-run dialog choice.
+    ground_frame_paths: list[Path] = field(default_factory=list)
+    ground_mask_path: Path | None = None
+    ground_use_single_frame: bool = False
+    ground_stack: StackingSettings = field(default_factory=StackingSettings)
+    # Empty means the legacy ``output`` choice controls exports.  New projects
+    # select exactly the products they need through the nightscape dialog.
+    enabled_outputs: set[str] = field(default_factory=set)
     star_alignment: bool = True
     ground_alignment: bool = False
     use_star_mask: bool = True
@@ -173,6 +207,8 @@ class NightscapeSettings:
     blur_scale: float = 32.0
     transition_width: float = 16.0
     background_strength: float = 0.25
+    smooth_boundary: bool = True
+    boundary_smoothing: str = "gaussian"
 
 
 @dataclass
@@ -197,6 +233,7 @@ class ProcessingOptions:
     )
     artifact_masks: ArtifactMaskSettings = field(default_factory=ArtifactMaskSettings)
     parallel_workers: int = 0
+    resources: ResourceSettings = field(default_factory=ResourceSettings)
 
 
 class AlignmentMode(StrEnum):

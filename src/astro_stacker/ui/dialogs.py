@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QRadioButton,
+    QScrollArea,
     QSpinBox,
     QTabWidget,
     QTextEdit,
@@ -37,6 +38,7 @@ from ..project.settings import (
     FrameSelectionMode,
     GroundSource,
     HDRStopAfter,
+    NightscapeCaptureMode,
     NightscapeOutput,
     ObstacleMode,
     ReferenceMode,
@@ -891,8 +893,18 @@ class NightscapeSettingsDialog(QDialog):
         self.project = project
         self.app_settings = QSettings("AstroStacker", "AstroStacker")
         settings = project.settings.processing.nightscape
-        self.setWindowTitle("新星景")
-        layout = QFormLayout(self)
+        self.setWindowTitle("新星景スタック設定")
+        outer_layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        content = QWidget()
+        layout = QFormLayout(content)
+        scroll.setWidget(content)
+        outer_layout.addWidget(scroll, 1)
+        self.capture_mode = QComboBox()
+        self.capture_mode.addItem("固定撮影（空と地上が同じ構図）", NightscapeCaptureMode.FIXED)
+        self.capture_mode.addItem("追尾撮影（地上は別撮り固定画像）", NightscapeCaptureMode.TRACKING)
+        self.capture_mode.setCurrentIndex(max(0, self.capture_mode.findData(settings.capture_mode)))
         self.output_mode = QComboBox()
         for label, value in (
             ("星空素材だけ", NightscapeOutput.SKY_ONLY),
@@ -909,6 +921,7 @@ class NightscapeSettingsDialog(QDialog):
         self.ground_source.setCurrentIndex(self.ground_source.findData(settings.ground_source))
         self.ground_paths = QLineEdit()
         self.ground_paths.setReadOnly(True)
+        self.ground_paths.setText(";".join(str(path) for path in settings.ground_frame_paths))
         ground_browse = QPushButton("別撮り画像を選択")
         ground_browse.clicked.connect(self._browse_ground)
         ground_row = QHBoxLayout()
@@ -919,16 +932,26 @@ class NightscapeSettingsDialog(QDialog):
         self.boundary.addItem("光害フレームで滑らかに合成", BoundaryMode.LIGHT_POLLUTION)
         self.boundary.addItem("ユーザー作成マスク", BoundaryMode.USER_MASK)
         self.boundary.setCurrentIndex(self.boundary.findData(settings.boundary_mode))
-        self.user_mask_path = QLineEdit()
+        self.user_mask_path = QLineEdit(str(settings.ground_mask_path or ""))
         mask_browse = QPushButton("マスク選択")
         mask_browse.clicked.connect(self._browse_mask)
+        mask_clear = QPushButton("解除")
+        mask_clear.clicked.connect(self._clear_mask)
         mask_row = QHBoxLayout()
         mask_row.addWidget(self.user_mask_path)
         mask_row.addWidget(mask_browse)
+        mask_row.addWidget(mask_clear)
         self.star_alignment = QCheckBox("星空を恒星基準で処理")
         self.star_alignment.setChecked(settings.star_alignment)
-        self.ground_alignment = QCheckBox("地上固定Alignment + Stack")
-        self.ground_alignment.setChecked(settings.ground_alignment)
+        self.ground_single = QCheckBox("地上は選択した1枚だけを使用（未選択時は先頭）")
+        self.ground_single.setChecked(settings.ground_use_single_frame)
+        self.ground_method = QComboBox()
+        for method in (StackingMethod.AVERAGE, StackingMethod.SIGMA_CLIP):
+            self.ground_method.addItem(method.show_name, method)
+        self.ground_method.setCurrentIndex(max(0, self.ground_method.findData(settings.ground_stack.method)))
+        self.ground_sigma = QDoubleSpinBox()
+        self.ground_sigma.setRange(1.0, 20.0)
+        self.ground_sigma.setValue(settings.ground_stack.sigma)
         self.star_protection = QCheckBox("地平線境界の星を保護")
         self.star_protection.setChecked(settings.use_star_mask)
         self.split_mode = QComboBox()
@@ -958,6 +981,15 @@ class NightscapeSettingsDialog(QDialog):
         self.transition_width = QDoubleSpinBox()
         self.transition_width.setRange(0.1, 1024)
         self.transition_width.setValue(settings.transition_width)
+        self.smooth_boundary = QCheckBox("境界マスクを滑らかにする")
+        self.smooth_boundary.setChecked(settings.smooth_boundary)
+        self.smoothing_method = QComboBox()
+        self.smoothing_method.addItem("Gaussian", "gaussian")
+        self.smoothing_method.addItem("Featherのみ", "feather")
+        self.smoothing_method.setCurrentIndex(
+            max(0, self.smoothing_method.findData(settings.boundary_smoothing))
+        )
+        self.smooth_boundary.toggled.connect(self.smoothing_method.setEnabled)
         self.background_strength = QDoubleSpinBox()
         self.background_strength.setRange(0, 4)
         self.background_strength.setSingleStep(0.05)
@@ -971,13 +1003,29 @@ class NightscapeSettingsDialog(QDialog):
         output_row = QHBoxLayout()
         output_row.addWidget(self.output)
         output_row.addWidget(output_browse)
-        layout.addRow("作成内容", self.output_mode)
+        self.output_checks = {}
+        output_box = QWidget()
+        output_layout = QVBoxLayout(output_box)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+        for key, label in (("merged_sky", "星空スタック"), ("ground_image", "地上画像（1枚使用時）"), ("ground_stack", "地上スタック（複数枚使用時）"), ("ground_mask", "地上マスク"), ("light_pollution_frame", "光害フレーム"), ("final_composite", "最終合成画像")):
+            check = QCheckBox(label)
+            check.setChecked(not settings.enabled_outputs or key in settings.enabled_outputs)
+            self.output_checks[key] = check
+            output_layout.addWidget(check)
+        self.capture_mode.currentIndexChanged.connect(self._update_capture_widgets)
+        self.boundary.currentIndexChanged.connect(self._update_output_widgets)
+        self.boundary.currentIndexChanged.connect(self._update_boundary_widgets)
+        self.ground_single.toggled.connect(self._update_output_widgets)
+        layout.addRow("撮影方式", self.capture_mode)
+        layout.addRow("従来の作成内容", self.output_mode)
         layout.addRow("地上画像", self.ground_source)
         layout.addRow("別撮り地上", ground_row)
         layout.addRow("境界処理", self.boundary)
         layout.addRow("ユーザーマスク", mask_row)
         layout.addRow(self.star_alignment)
-        layout.addRow(self.ground_alignment)
+        layout.addRow(self.ground_single)
+        layout.addRow("地上スタック方法", self.ground_method)
+        layout.addRow("地上 Sigma", self.ground_sigma)
         layout.addRow(self.star_protection)
         layout.addRow("時間グループ", self.split_mode)
         layout.addRow(self.suggestion)
@@ -985,15 +1033,43 @@ class NightscapeSettingsDialog(QDialog):
         layout.addRow("Feather", self.feather)
         layout.addRow("光害 Blur scale", self.blur_scale)
         layout.addRow("境界 Transition width", self.transition_width)
+        layout.addRow(self.smooth_boundary)
+        layout.addRow("境界平滑化", self.smoothing_method)
         layout.addRow("背景強度", self.background_strength)
         layout.addRow("保存形式", self.format)
         layout.addRow("出力フォルダ", output_row)
+        layout.addRow("書き出す画像", output_box)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        outer_layout.addWidget(buttons)
+        self._update_capture_widgets()
+        self._update_output_widgets()
+        self._update_boundary_widgets()
+
+    def _update_capture_widgets(self):
+        tracking = self.capture_mode.currentData() == NightscapeCaptureMode.TRACKING
+        if tracking:
+            self.ground_source.setCurrentIndex(self.ground_source.findData(GroundSource.SEPARATE_FRAMES))
+        self.ground_source.setEnabled(not tracking)
+
+    def _update_output_widgets(self):
+        self.output_checks["ground_image"].setEnabled(self.ground_single.isChecked())
+        self.output_checks["ground_stack"].setEnabled(not self.ground_single.isChecked())
+        self.output_checks["light_pollution_frame"].setEnabled(
+            self.boundary.currentData() == BoundaryMode.LIGHT_POLLUTION
+        )
+
+    def _update_boundary_widgets(self):
+        user_mask = self.boundary.currentData() == BoundaryMode.USER_MASK
+        self.user_mask_path.setEnabled(user_mask)
+
+    def _clear_mask(self):
+        self.user_mask_path.clear()
+        if self.boundary.currentData() == BoundaryMode.USER_MASK:
+            self.boundary.setCurrentIndex(self.boundary.findData(BoundaryMode.GROUND_MASK))
 
     def _browse_ground(self):
         paths, _ = QFileDialog.getOpenFileNames(
@@ -1022,16 +1098,34 @@ class NightscapeSettingsDialog(QDialog):
     def accept(self):
         settings = self.project.settings.processing.nightscape
         settings.output = self.output_mode.currentData()
+        settings.capture_mode = self.capture_mode.currentData()
         settings.ground_source = self.ground_source.currentData()
         settings.boundary_mode = self.boundary.currentData()
         settings.star_alignment = self.star_alignment.isChecked()
-        settings.ground_alignment = self.ground_alignment.isChecked()
+        # Ground frames are always stacked without alignment in the nightscape
+        # workflow.  Keep the old field false for manifests from prior builds.
+        settings.ground_alignment = False
+        settings.ground_use_single_frame = self.ground_single.isChecked()
+        settings.ground_stack.method = self.ground_method.currentData()
+        settings.ground_stack.sigma = self.ground_sigma.value()
+        settings.ground_frame_paths = [
+            Path(value) for value in self.ground_paths.text().split(";") if value
+        ]
+        settings.ground_mask_path = (
+            Path(self.user_mask_path.text()) if self.user_mask_path.text() else None
+        )
+        settings.enabled_outputs = {
+            key for key, check in self.output_checks.items()
+            if check.isChecked() and check.isEnabled()
+        }
         settings.use_star_mask = self.star_protection.isChecked()
         settings.split_mode = self.split_mode.currentData()
         settings.split_index = self.split_index.value()
         settings.feather = self.feather.value()
         settings.blur_scale = self.blur_scale.value()
         settings.transition_width = self.transition_width.value()
+        settings.smooth_boundary = self.smooth_boundary.isChecked()
+        settings.boundary_smoothing = self.smoothing_method.currentData()
         settings.background_strength = self.background_strength.value()
         if settings.ground_source == GroundSource.SEPARATE_FRAMES and not self.ground_paths.text():
             QMessageBox.warning(self, "新星景", "別撮り地上画像を選択してください。")
@@ -1042,7 +1136,7 @@ class NightscapeSettingsDialog(QDialog):
         super().accept()
 
     def selected(self):
-        ground = [Path(value) for value in self.ground_paths.text().split(";") if value]
+        ground = list(self.project.settings.processing.nightscape.ground_frame_paths)
         mask = Path(self.user_mask_path.text()) if self.user_mask_path.text() else None
         return Path(self.output.text()), self.format.currentData(), ground, mask
 
@@ -1053,11 +1147,27 @@ class ParallelSettingsDialog(QDialog):
         self.project = project
         self.setWindowTitle("並列処理")
         layout = QFormLayout(self)
+        resources = project.settings.processing.resources
         self.workers = QSpinBox()
         self.workers.setRange(0, 256)
         self.workers.setSpecialValueText("自動（CPU・空きメモリから決定）")
         self.workers.setValue(project.settings.processing.parallel_workers)
         layout.addRow("最大ワーカー数", self.workers)
+        self.temp_directory = QLineEdit(str(resources.temp_directory or ""))
+        temp_browse = QPushButton("参照")
+        temp_browse.clicked.connect(self._browse_temp_directory)
+        temp_row = QHBoxLayout()
+        temp_row.addWidget(self.temp_directory)
+        temp_row.addWidget(temp_browse)
+        layout.addRow("一時ファイル保存先", temp_row)
+        self.image_cache = self._resource_spin(resources.image_cache_bytes, 0.25, 64)
+        self.stack_memory = self._resource_spin(resources.stack_memory_bytes, 0.25, 64)
+        self.stack_disk = self._resource_spin(resources.stack_disk_bytes, 1, 1024)
+        self.disk_reserve = self._resource_spin(resources.disk_reserve_bytes, 0.5, 256)
+        layout.addRow("画像キャッシュ", self.image_cache)
+        layout.addRow("Stack作業メモリ", self.stack_memory)
+        layout.addRow("Stack一時ディスク上限", self.stack_disk)
+        layout.addRow("確保しておく空き容量", self.disk_reserve)
         note = QLabel(
             "0では処理ごとにCPU数と空きメモリから安全な並列度を決定します。"
             "結果順序は入力順に固定され、メモリ不足時は逐次処理へ縮退します。"
@@ -1073,7 +1183,31 @@ class ParallelSettingsDialog(QDialog):
 
     def accept(self):
         self.project.settings.processing.parallel_workers = self.workers.value()
+        resources = self.project.settings.processing.resources
+        resources.temp_directory = Path(self.temp_directory.text()) if self.temp_directory.text().strip() else None
+        resources.image_cache_bytes = self._bytes(self.image_cache)
+        resources.stack_memory_bytes = self._bytes(self.stack_memory)
+        resources.stack_disk_bytes = self._bytes(self.stack_disk)
+        resources.disk_reserve_bytes = self._bytes(self.disk_reserve)
         super().accept()
+
+    @staticmethod
+    def _resource_spin(value: int, minimum: float, maximum: float) -> QDoubleSpinBox:
+        spin = QDoubleSpinBox()
+        spin.setRange(minimum, maximum)
+        spin.setSingleStep(0.5)
+        spin.setSuffix(" GiB")
+        spin.setValue(value / (1024**3))
+        return spin
+
+    @staticmethod
+    def _bytes(spin: QDoubleSpinBox) -> int:
+        return max(1, int(spin.value() * 1024**3))
+
+    def _browse_temp_directory(self):
+        path = QFileDialog.getExistingDirectory(self, "一時ファイル保存先", self.temp_directory.text())
+        if path:
+            self.temp_directory.setText(path)
 
 
 class ErrorDialog(QMessageBox):

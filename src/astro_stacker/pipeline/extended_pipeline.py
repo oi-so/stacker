@@ -16,7 +16,13 @@ from ..io.image_data import AstroImage
 from ..io.saver import save_image
 from ..metadata.stacked import stack_metadata
 from ..moving_object.capture_time import capture_midpoint
-from ..project.settings import HDRSettings, HDRStopAfter, StackingSettings, TimelapseSettings
+from ..project.settings import (
+    HDRSettings,
+    HDRStopAfter,
+    ResourceSettings,
+    StackingSettings,
+    TimelapseSettings,
+)
 from ..stacking.combiner import ImageCombiner
 
 
@@ -54,7 +60,9 @@ class HDRPipeline:
         progress=None,
         is_cancelled=None,
         requested_workers: int = 0,
+        resource_settings: ResourceSettings | None = None,
     ) -> WorkflowResult:
+        resource_settings = resource_settings or ResourceSettings()
         groups = (
             group_by_exposure(frames, hdr_settings.group_tolerance)
             if hdr_settings.auto_group
@@ -71,7 +79,13 @@ class HDRPipeline:
             index, group = item
             if is_cancelled and is_cancelled():
                 raise InterruptedError("HDR processing cancelled")
-            stack = ImageCombiner(self.provider).combine(
+            stack = ImageCombiner(
+                self.provider,
+                memory_limit=resource_settings.stack_memory_bytes,
+                disk_limit=resource_settings.stack_disk_bytes,
+                disk_reserve=resource_settings.disk_reserve_bytes,
+                temp_dir=resource_settings.temp_directory,
+            ).combine(
                 list(group.frames), stack_settings.method, stack_settings,
                 progress=progress, is_cancelled=is_cancelled,
                 combine_msg=f"HDR露出グループ {index}/{len(groups)}",
@@ -130,7 +144,9 @@ class TimelapseStackPipeline:
         progress=None,
         is_cancelled=None,
         requested_workers: int = 0,
+        resource_settings: ResourceSettings | None = None,
     ) -> WorkflowResult:
+        resource_settings = resource_settings or ResourceSettings()
         groups = make_windows(
             frames,
             timelapse_settings.window_size,
@@ -146,7 +162,13 @@ class TimelapseStackPipeline:
             index, group = item
             if is_cancelled and is_cancelled():
                 raise InterruptedError("Time-lapse stacking cancelled")
-            image = ImageCombiner(self.provider).combine(
+            image = ImageCombiner(
+                self.provider,
+                memory_limit=resource_settings.stack_memory_bytes,
+                disk_limit=resource_settings.stack_disk_bytes,
+                disk_reserve=resource_settings.disk_reserve_bytes,
+                temp_dir=resource_settings.temp_directory,
+            ).combine(
                 list(group.frames), stack_settings.method, stack_settings,
                 progress=progress, is_cancelled=is_cancelled,
                 combine_msg=f"タイムラプス {index}/{len(groups)}",

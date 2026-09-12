@@ -47,6 +47,20 @@ def _blocked_to_weight(blocked: np.ndarray, feather: float) -> np.ndarray:
     return np.clip(distance / float(feather), 0.0, 1.0).astype(np.float32)
 
 
+def painted_obstruction_weight_mask(blocked: np.ndarray, *, feather: float = 3.0) -> np.ndarray:
+    """Convert an editor-painted obstruction raster into a stack weight mask.
+
+    This is shared by the UI and processing code so brush, line, and polygon
+    selections all retain the same feathering semantics (0 = reject, 1 = use).
+    """
+    raster = np.asarray(blocked)
+    if raster.ndim != 2 or not np.isfinite(raster).all():
+        raise ValueError("Painted obstruction mask must be a finite 2D raster")
+    if not np.isfinite(feather) or feather < 0:
+        raise ValueError("Feather must be non-negative")
+    return _blocked_to_weight((raster > 0).astype(np.uint8), feather)
+
+
 def polyline_weight_mask(
     shape: tuple[int, int],
     polylines: Iterable[Polyline],

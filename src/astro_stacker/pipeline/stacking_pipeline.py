@@ -149,7 +149,18 @@ class StackingPipeline:
         weights = quality_weights(frames) if settings.use_quality_weights else None
 
         with timer("StackWorkers", True):
-            combiner = DrizzleCombiner(provider) if drizzle.enabled else ImageCombiner(provider)
+            resources = project.settings.processing.resources
+            combiner = (
+                DrizzleCombiner(provider)
+                if drizzle.enabled
+                else ImageCombiner(
+                    provider,
+                    memory_limit=resources.stack_memory_bytes,
+                    disk_limit=resources.stack_disk_bytes,
+                    disk_reserve=resources.disk_reserve_bytes,
+                    temp_dir=resources.temp_directory,
+                )
+            )
 
             if drizzle.enabled:
                 result = combiner.combine(

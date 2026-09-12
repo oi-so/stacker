@@ -203,7 +203,10 @@ class ProcessingPipeline:
         calibration = project.settings.calibration
         provider = ImageManagerProvider(self.manager)
         self._build_master_frames(
-            project, MasterFrameBuilder(provider), progress, is_cancelled
+            project,
+            MasterFrameBuilder(provider, project.settings.processing.resources),
+            progress,
+            is_cancelled,
         )
         calibrator = Calibrator(project, calibration)
         calibrate_before_align = getattr(

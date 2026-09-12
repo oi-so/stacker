@@ -1,3 +1,4 @@
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -417,6 +418,59 @@ def test_nightscape_composite_preserves_stars_at_boundary():
     assert result[10, 10] == 10
     pollution = light_pollution_frame(sky, stars, blur_scale=2)
     assert pollution.shape == sky.shape
+
+
+def test_nightscape_composite_accepts_singleton_channel_materials():
+    sky = np.full((6, 7, 1), 10, dtype=np.float32)
+    ground = np.full((6, 7), 2, dtype=np.float32)
+    weight = np.ones((6, 7), dtype=np.float32)
+    pollution = np.zeros((6, 7, 1), dtype=np.float32)
+
+    result, _ = composite_nightscape(
+        sky,
+        ground,
+        weight,
+        pollution_frame=pollution,
+        background_strength=0.25,
+    )
+
+    assert result.shape == (6, 7)
+    np.testing.assert_allclose(result, 10)
+
+
+def test_sigma_clip_all_invalid_pixels_does_not_warn():
+    frames = [frame(0), frame(1)]
+    arrays = np.full((2, 4, 5), np.nan, dtype=np.float32)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = ImageCombiner(Provider(arrays)).combine(
+            frames,
+            StackingMethod.SIGMA_CLIP,
+            StackingSettings(method=StackingMethod.SIGMA_CLIP),
+        )
+    assert not caught
+    assert result is not None
+    assert np.all(result == 0)
+
+
+def test_statistical_stack_removes_custom_temp_file(tmp_path):
+    frames = [frame(0), frame(1), frame(2)]
+    arrays = np.stack(
+        [np.full((4, 5), index, dtype=np.float32) for index in range(3)]
+    )
+    result = ImageCombiner(
+        Provider(arrays),
+        memory_limit=1,
+        disk_limit=1024**3,
+        disk_reserve=0,
+        temp_dir=tmp_path,
+    ).combine(
+        frames,
+        StackingMethod.MEDIAN,
+        StackingSettings(method=StackingMethod.MEDIAN),
+    )
+    assert result is not None
+    assert not list(tmp_path.glob("astro-stacker-stack-*.dat"))
 
 
 def test_nightscape_pipeline_can_finish_composite():

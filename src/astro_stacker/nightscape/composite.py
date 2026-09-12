@@ -4,13 +4,20 @@ import cv2
 import numpy as np
 
 
+def _material_array(image: np.ndarray) -> np.ndarray:
+    data = np.asarray(image, dtype=np.float32)
+    if data.ndim == 3 and data.shape[-1] == 1:
+        return data[..., 0]
+    return data
+
+
 def light_pollution_frame(
     image: np.ndarray,
     star_mask: np.ndarray | None = None,
     *,
     blur_scale: float = 32.0,
 ) -> np.ndarray:
-    data = np.asarray(image, dtype=np.float32)
+    data = _material_array(image)
     source = data.copy()
     if star_mask is not None:
         mask = (np.asarray(star_mask, dtype=np.float32) > 0.05).astype(np.uint8) * 255
@@ -33,8 +40,8 @@ def composite_nightscape(
     pollution_frame: np.ndarray | None = None,
     background_strength: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
-    sky_data = np.asarray(sky, dtype=np.float32)
-    ground_data = np.asarray(ground, dtype=np.float32)
+    sky_data = _material_array(sky)
+    ground_data = _material_array(ground)
     if sky_data.shape != ground_data.shape:
         raise ValueError("Sky and ground material must have the same shape")
     weight = np.clip(np.asarray(sky_weight, dtype=np.float32), 0, 1)
@@ -48,7 +55,7 @@ def composite_nightscape(
         weight = np.maximum(weight, stars * (weight > 0).astype(np.float32))
     blend_sky = sky_data
     if pollution_frame is not None and background_strength:
-        pollution = np.asarray(pollution_frame, dtype=np.float32)
+        pollution = _material_array(pollution_frame)
         if pollution.shape != sky_data.shape:
             raise ValueError("Light-pollution frame shape does not match materials")
         blend_sky = sky_data + pollution * float(background_strength) * (1.0 - weight[..., None] if sky_data.ndim == 3 else 1.0 - weight)

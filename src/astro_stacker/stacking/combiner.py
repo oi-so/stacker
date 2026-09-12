@@ -330,8 +330,27 @@ class ImageCombiner:
                     for _ in range(settings.iterations):
                         if is_cancelled and is_cancelled():
                             return None
-                        mean = np.nanmean(chunk, axis=0)
-                        std = np.nanstd(chunk, axis=0)
+                        valid = np.isfinite(chunk)
+                        count = np.sum(valid, axis=0)
+                        safe_chunk = np.where(valid, chunk, 0.0)
+                        mean = np.divide(
+                            np.sum(safe_chunk, axis=0),
+                            count,
+                            out=np.full(count.shape, np.nan, dtype=np.float32),
+                            where=count > 0,
+                        )
+                        squared_delta = np.where(
+                            valid,
+                            (chunk - mean) ** 2,
+                            0.0,
+                        )
+                        variance = np.divide(
+                            np.sum(squared_delta, axis=0),
+                            count,
+                            out=np.full(count.shape, np.nan, dtype=np.float32),
+                            where=count > 0,
+                        )
+                        std = np.sqrt(variance)
                         std[std < 1e-8] = 1.0
                         reject = np.abs(chunk - mean) > settings.sigma * std
                         if not np.any(reject):
@@ -341,7 +360,14 @@ class ImageCombiner:
                         reject &= ~np.all(reject | np.isnan(chunk), axis=0)
                         chunk[reject] = np.nan
                     if frame_weights is None:
-                        result[y:end] = np.nanmean(chunk, axis=0)
+                        valid = np.isfinite(chunk)
+                        count = np.sum(valid, axis=0)
+                        result[y:end] = np.divide(
+                            np.nansum(chunk, axis=0),
+                            count,
+                            out=np.full(count.shape, np.nan, dtype=np.float32),
+                            where=count > 0,
+                        )
                     else:
                         scalars = np.asarray(
                             [self._frame_weight(frame, frame_weights) for frame in images],
