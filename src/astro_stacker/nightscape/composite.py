@@ -58,7 +58,13 @@ def composite_nightscape(
         pollution = _material_array(pollution_frame)
         if pollution.shape != sky_data.shape:
             raise ValueError("Light-pollution frame shape does not match materials")
-        blend_sky = sky_data + pollution * float(background_strength) * (1.0 - weight[..., None] if sky_data.ndim == 3 else 1.0 - weight)
+        transition = 1.0 - weight
+        if sky_data.ndim == 3:
+            transition = transition[..., None]
+        # The blurred ground-derived pollution frame is only introduced in
+        # the transition/ground side, where it bridges exposure and color
+        # differences without replacing the actual sky stack.
+        blend_sky = sky_data + pollution * float(background_strength) * transition
     channel_weight = weight[..., None] if sky_data.ndim == 3 else weight
     result = blend_sky * channel_weight + ground_data * (1.0 - channel_weight)
     return result.astype(np.float32), weight

@@ -31,6 +31,7 @@ class PolygonImageViewer(ImageViewer):
         self.brush_size = 32.0
         self.painted_ground = np.zeros((1, 1), dtype=np.uint8)
         self._brush_cursor: QPointF | None = None
+        self._last_paint_point: QPointF | None = None
         self.setDragMode(self.DragMode.NoDrag)
 
     def set_image(self, image: np.ndarray) -> None:
@@ -41,6 +42,7 @@ class PolygonImageViewer(ImageViewer):
         self.tool = tool
         if tool not in {"paint", "erase"}:
             self._brush_cursor = None
+            self._last_paint_point = None
         self.viewport().update()
 
     def set_points(self, points) -> None:
@@ -98,6 +100,7 @@ class PolygonImageViewer(ImageViewer):
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:
         self._drag_index = None
+        self._last_paint_point = None
         super().mouseReleaseEvent(event)
 
     def leaveEvent(self, event) -> None:
@@ -107,14 +110,24 @@ class PolygonImageViewer(ImageViewer):
 
     def _paint(self, point: QPointF) -> None:
         value = 255 if self.tool == "paint" else 0
-        cv2.circle(
-            self.painted_ground,
-            (round(point.x()), round(point.y())),
-            max(1, round(self.brush_size / 2)),
-            value,
-            -1,
-            cv2.LINE_AA,
-        )
+        current = (round(point.x()), round(point.y()))
+        radius = max(1, round(self.brush_size / 2))
+        if self._last_paint_point is None:
+            cv2.circle(self.painted_ground, current, radius, value, -1, cv2.LINE_AA)
+        else:
+            previous = (
+                round(self._last_paint_point.x()),
+                round(self._last_paint_point.y()),
+            )
+            cv2.line(
+                self.painted_ground,
+                previous,
+                current,
+                value,
+                max(1, round(self.brush_size)),
+                cv2.LINE_AA,
+            )
+        self._last_paint_point = point
 
     def drawForeground(self, painter, rect):
         super().drawForeground(painter, rect)
@@ -257,7 +270,10 @@ class GroundMaskEditorDialog(QDialog):
 
     def mask(self) -> np.ndarray:
         points = [(point.x(), point.y()) for point in self.viewer.points]
-        mask = polygon_sky_mask(self.image.shape[:2], points, self.feather.value())
+        if len(points) >= 3:
+            mask = polygon_sky_mask(self.image.shape[:2], points, self.feather.value())
+        else:
+            mask = np.ones(self.image.shape[:2], dtype=np.float32)
         if np.any(self.viewer.painted_ground):
             mask[self.viewer.painted_ground > 0] = 0
         return mask

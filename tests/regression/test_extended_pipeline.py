@@ -438,6 +438,27 @@ def test_nightscape_composite_accepts_singleton_channel_materials():
     np.testing.assert_allclose(result, 10)
 
 
+def test_light_pollution_is_limited_to_transition_side():
+    sky = np.full((4, 4), 10, dtype=np.float32)
+    ground = np.full((4, 4), 2, dtype=np.float32)
+    weight = np.zeros((4, 4), dtype=np.float32)
+    weight[:1] = 1
+    weight[1] = 0.5
+    pollution = np.full((4, 4), 4, dtype=np.float32)
+
+    result, _ = composite_nightscape(
+        sky,
+        ground,
+        weight,
+        pollution_frame=pollution,
+        background_strength=1.0,
+    )
+
+    np.testing.assert_allclose(result[:1], 10)
+    assert np.all(result[1] > ground[1])
+    np.testing.assert_allclose(result[3:], ground[3:])
+
+
 def test_sigma_clip_all_invalid_pixels_does_not_warn():
     frames = [frame(0), frame(1)]
     arrays = np.full((2, 4, 5), np.nan, dtype=np.float32)
