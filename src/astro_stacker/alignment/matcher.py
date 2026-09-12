@@ -15,7 +15,7 @@ def find_transform(
     target: StarCatalog
 ):
     """Find transformation from target coordinates to reference coordinates.
-    
+
     Args:
         reference: Reference star catalog
         target: Target star catalog to match
@@ -32,10 +32,13 @@ def find_transform(
     if len(ref_points) < 3 or len(tgt_points) < 3:
         raise ValueError("At least three stars are required for alignment")
 
+    max_control_points = max(len(ref_points), len(tgt_points))
+
     # Use astroalign to find matching stars and compute transformation
     transform, (src, dst) = aa.find_transform(
         tgt_points,
-        ref_points
+        ref_points,
+        max_control_points=max_control_points,
     )
 
     return transform, src, dst
