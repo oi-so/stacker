@@ -105,7 +105,9 @@ class HDRPipeline:
             metadata = stack_metadata(group.frames, stack_settings.method)
             _save_product(result, name, stack, output_directory, suffix, metadata, bit_depth)
             exposure_stacks.append(stack)
-            exposure_times.append(group.exposure_time)
+            iso_gain = (group.iso / 100.0) if group.iso else 1.0
+            f_gain = (group.f_number / 1.0) ** 2 if group.f_number else 1.0
+            exposure_times.append(group.exposure_time * iso_gain * f_gain)
         if hdr_settings.stop_after == HDRStopAfter.EXPOSURE_STACKS:
             return result
         hdr, validity = merge_hdr(

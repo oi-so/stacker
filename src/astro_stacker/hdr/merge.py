@@ -111,14 +111,12 @@ def merge_hdr(
         if not np.isfinite(exposure) or exposure <= 0:
             raise ValueError("HDR exposure times must be positive")
         data = np.asarray(image, dtype=np.float32)
-        level = np.clip((data - black) / (white - black), 0.0, 1.0)
-        # Smooth triangular response: dark and saturated samples approach zero.
-        weight = np.sin(np.pi * level) ** 2
-        if data.ndim == 3:
-            weight2d = np.min(weight, axis=-1)
-        else:
-            weight2d = weight
-        weight2d *= np.isfinite(data).all(axis=-1) if data.ndim == 3 else np.isfinite(data)
+        finite = np.isfinite(data).all(axis=-1) if data.ndim == 3 else np.isfinite(data)
+        safe = np.where(np.isfinite(data), data, 0.0)
+        channel_peak = np.max(safe, axis=-1) if data.ndim == 3 else safe
+        level = np.clip((channel_peak - black) / (white - black), 0.0, 1.0)
+        weight2d = np.sin(np.pi * level) ** 2
+        weight2d *= finite
         if masks is not None:
             mask = np.asarray(masks[index], dtype=np.float32)
             if mask.shape != shape[:2]:
