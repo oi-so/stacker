@@ -4,8 +4,8 @@ Matches stars between two catalogs and computes the transformation
 using the astroalign library.
 """
 
-import numpy as np
 import astroalign as aa
+import numpy as np
 
 from ..stars.star_data import StarCatalog
 
@@ -26,15 +26,8 @@ def find_transform(
         - src: Matched source coordinates
         - dst: Matched destination coordinates
     """
-    ref_points = np.array([
-        [s.x, s.y]
-        for s in reference.brightest(50).stars
-    ])
-
-    tgt_points = np.array([
-        [s.x, s.y]
-        for s in target.brightest(50).stars
-    ])
+    ref_points = np.array([[s.x, s.y] for s in reference.stars])
+    tgt_points = np.array([[s.x, s.y] for s in target.stars])
 
     if len(ref_points) < 3 or len(tgt_points) < 3:
         raise ValueError("At least three stars are required for alignment")

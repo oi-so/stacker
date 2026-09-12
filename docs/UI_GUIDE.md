@@ -28,6 +28,7 @@
   - 参照画像: 中央 / 最高品質 / 手動選択
   - 星検出感度 `sigma`: 3.0から10.0
   - 最大星数 `max_stars`
+  - 星像FWHM、位置合わせ候補のsharpness下限、roundness上限
 - `StackingSettingsDialog`
   - スタック方法: Mean / Median / Sigma Clipping / Add
   - Sigma値と繰り返し回数

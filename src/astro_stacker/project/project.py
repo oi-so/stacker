@@ -74,6 +74,9 @@ class AlignmentSignature:
     calibrate_before_align: bool
     use_wcs: bool = False
     calibration_state: tuple = ()
+    star_fwhm: float = 4.0
+    alignment_sharpness_min: float = 0.20
+    alignment_roundness_max: float = 0.50
 
 
 @dataclass
@@ -171,6 +174,9 @@ class Project:
             ),
             sigma=self.settings.alignment.sigma,
             max_stars=self.settings.alignment.max_stars,
+            star_fwhm=self.settings.alignment.star_fwhm,
+            alignment_sharpness_min=self.settings.alignment.alignment_sharpness_min,
+            alignment_roundness_max=self.settings.alignment.alignment_roundness_max,
             calibrate_before_align=
                 self.settings.alignment.calibrate_before_align,
             use_wcs=self.settings.alignment.use_wcs,

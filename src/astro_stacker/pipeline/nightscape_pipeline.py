@@ -11,10 +11,7 @@ from ..core.frame_provider import FrameProvider
 from ..io.image_data import AstroImage
 from ..io.saver import save_image
 from ..masks.weights import (
-    AlignedMaskProvider,
     AlignmentValidityMaskProvider,
-    ArrayMaskProvider,
-    CompositeMaskProvider,
 )
 from ..nightscape.composite import composite_nightscape, light_pollution_frame
 from ..project.settings import (
@@ -98,13 +95,9 @@ class NightscapePipeline:
         if 0 < split_index < len(sky_frames):
             groups = [sky_frames[:split_index], sky_frames[split_index:]]
 
-        base_mask = ArrayMaskProvider(lambda _: mask)
-        if settings.star_alignment:
-            mask_provider = CompositeMaskProvider(
-                [AlignedMaskProvider(base_mask), AlignmentValidityMaskProvider()]
-            )
-        else:
-            mask_provider = base_mask
+        # Sky material is full-frame.  The ground mask belongs to the final
+        # composite and must not black out the horizon during sky stacking.
+        mask_provider = AlignmentValidityMaskProvider() if settings.star_alignment else None
         sky_stacks = []
         sky_validity = []
         for index, group in enumerate(groups, 1):
@@ -154,7 +147,9 @@ class NightscapePipeline:
             raise InterruptedError("Nightscape ground stacking cancelled")
         if ground.shape != sky.shape:
             raise ValueError("Sky and ground materials must have identical dimensions")
-        result.products["ground_image" if settings.ground_use_single_frame else "ground_stack"] = ground
+        result.products["ground_stack"] = ground
+        if settings.ground_use_single_frame:
+            result.products["ground_image"] = ground
         result.products["ground_mask"] = mask
         if star_mask is not None:
             result.products["star_mask"] = star_mask

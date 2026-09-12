@@ -159,6 +159,9 @@ class AlignmentPipeline:
                 reference,
                 settings.sigma,
                 settings.max_stars,
+                settings.star_fwhm,
+                settings.alignment_sharpness_min,
+                settings.alignment_roundness_max,
             )
             reference.info.stars.all_stars = reference_result.catalog
             reference.info.score_data = reference_result.score_data
@@ -181,6 +184,9 @@ class AlignmentPipeline:
                         frame,
                         settings.sigma,
                         settings.max_stars,
+                        settings.star_fwhm,
+                        settings.alignment_sharpness_min,
+                        settings.alignment_roundness_max,
                     ): frame
                     for frame in frames_to_align
                     if frame is not reference

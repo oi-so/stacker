@@ -35,8 +35,8 @@ class StackingMethod(StrEnum):
 @dataclass
 class StackingSettings:
     method: StackingMethod = StackingMethod.AVERAGE
-    sigma: float = 3.0
-    iterations: int = 1
+    sigma: float = 2.0
+    iterations: int = 5
     use_weight_masks: bool = False
     use_quality_weights: bool = False
     exposure_normalization: bool = False
@@ -250,10 +250,13 @@ class ReferenceMode(StrEnum):
 class AlignmentSettings:
     max_stars: int = 500
     sigma: float = 5.0
+    star_fwhm: float = 4.0
     reference_mode: ReferenceMode = ReferenceMode.MIDDLE
     calibrate_before_align: bool = True
     use_wcs: bool = False
     mode: AlignmentMode = AlignmentMode.ALL
+    alignment_sharpness_min: float = 0.20
+    alignment_roundness_max: float = 0.50
 
 
 @dataclass

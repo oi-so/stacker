@@ -127,15 +127,42 @@ class AlignmentSettingsDialog(QDialog):
         layout.addRow("手動参照画像", self.manual_reference)
 
         self.sigma = QDoubleSpinBox()
-        self.sigma.setRange(3.0, 10.0)
+        self.sigma.setRange(3.0, 30.0)
         self.sigma.setSingleStep(0.5)
         self.sigma.setValue(project.settings.alignment.sigma)
         layout.addRow("星検出感度 sigma", self.sigma)
+
+        self.star_fwhm = QDoubleSpinBox()
+        self.star_fwhm.setRange(1.0, 12.0)
+        self.star_fwhm.setSingleStep(0.5)
+        self.star_fwhm.setValue(project.settings.alignment.star_fwhm)
+        self.star_fwhm.setToolTip(
+            "検出する点像の幅です。星雲端の誤検出には小さめの値を試します。"
+        )
+        layout.addRow("星像 FWHM", self.star_fwhm)
 
         self.max_stars = QSpinBox()
         self.max_stars.setRange(20, 5000)
         self.max_stars.setValue(project.settings.alignment.max_stars)
         layout.addRow("最大星数", self.max_stars)
+
+        self.alignment_sharpness = QDoubleSpinBox()
+        self.alignment_sharpness.setRange(0.0, 1.0)
+        self.alignment_sharpness.setSingleStep(0.05)
+        self.alignment_sharpness.setValue(project.settings.alignment.alignment_sharpness_min)
+        self.alignment_sharpness.setToolTip(
+            "星雲の明るい塊などを除外するための点像らしさの下限です。"
+        )
+        layout.addRow("位置合わせ sharpness 下限", self.alignment_sharpness)
+
+        self.alignment_roundness = QDoubleSpinBox()
+        self.alignment_roundness.setRange(0.0, 1.0)
+        self.alignment_roundness.setSingleStep(0.05)
+        self.alignment_roundness.setValue(project.settings.alignment.alignment_roundness_max)
+        self.alignment_roundness.setToolTip(
+            "位置合わせに使う候補のroundness絶対値上限です。"
+        )
+        layout.addRow("位置合わせ roundness 上限", self.alignment_roundness)
 
         self.use_wcs = QCheckBox("利用可能ならFITS WCSから高速に位置合わせ")
         self.use_wcs.setChecked(project.settings.alignment.use_wcs)
@@ -162,7 +189,10 @@ class AlignmentSettingsDialog(QDialog):
         if alignment.reference_mode == ReferenceMode.MANUAL:
             self.project.set_reference_image(self.manual_reference.currentData())
         alignment.sigma = self.sigma.value()
+        alignment.star_fwhm = self.star_fwhm.value()
         alignment.max_stars = self.max_stars.value()
+        alignment.alignment_sharpness_min = self.alignment_sharpness.value()
+        alignment.alignment_roundness_max = self.alignment_roundness.value()
         alignment.use_wcs = self.use_wcs.isChecked()
         calibration.use_darks = self.use_dark.isChecked()
         calibration.use_biases = self.use_bias.isChecked()

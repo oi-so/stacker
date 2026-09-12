@@ -515,6 +515,63 @@ def test_nightscape_pipeline_can_finish_composite():
     np.testing.assert_allclose(result.products["final_composite"][:2], 5)
 
 
+def test_nightscape_sky_stack_keeps_ground_pixels():
+    frames = [frame(0), frame(1)]
+    arrays = np.stack(
+        [np.vstack((np.full((2, 5), 10), np.full((2, 5), 2))) for _ in frames]
+    )
+    settings = NightscapeSettings(star_alignment=True)
+    sky_mask = np.vstack((np.ones((2, 5)), np.zeros((2, 5))))
+    result = NightscapePipeline(Provider(arrays)).run(
+        frames,
+        frames,
+        StackingSettings(),
+        settings,
+        sky_mask,
+    )
+
+    assert "sky_stack_A" in result.products
+    np.testing.assert_allclose(result.products["sky_stack_A"][2:], 2)
+    assert "ground_stack" in result.products
+
+
+def test_point_source_filter_excludes_extended_alignment_candidates():
+    catalog = StarCatalog(
+        [
+            Star(1, 1, 100, 10, sharpness=0.8, roundness=0.05),
+            Star(2, 2, 200, 20, sharpness=0.1, roundness=0.02),
+            Star(3, 3, 300, 30, sharpness=0.8, roundness=0.7),
+        ]
+    )
+
+    filtered = catalog.point_sources(10)
+
+    assert [star.flux for star in filtered.stars] == [100]
+
+
+def test_point_source_selection_distributes_alignment_stars_spatially():
+    catalog = StarCatalog(
+        [
+            Star(10 + index, 10, 1000 - index, 100, sharpness=0.8, roundness=0.0)
+            for index in range(20)
+        ]
+        + [
+            Star(90, 90, 10, 10, sharpness=0.8, roundness=0.0),
+            Star(10, 90, 9, 9, sharpness=0.8, roundness=0.0),
+            Star(90, 10, 8, 8, sharpness=0.8, roundness=0.0),
+        ]
+    )
+
+    selected = catalog.point_sources(4, width=100, height=100, grid_size=2)
+
+    assert len(selected.stars) == 4
+    assert {(int(star.x > 50), int(star.y > 50)) for star in selected.stars} == {
+        (0, 0),
+        (1, 0),
+        (0, 1),
+    } | {(1, 1)}
+
+
 def test_parallel_timelapse_is_bounded_and_keeps_output_order(tmp_path, monkeypatch):
     frames = [frame(index) for index in range(6)]
     arrays = np.stack(

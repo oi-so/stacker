@@ -50,6 +50,9 @@ flowchart TD
 - `CalibrationSettings.use_biases`: False
 - `AlignmentSettings.max_stars`: 500
 - `AlignmentSettings.sigma`: 5.0
+- `AlignmentSettings.star_fwhm`: 3.0
+- `AlignmentSettings.alignment_sharpness_min`: 0.20
+- `AlignmentSettings.alignment_roundness_max`: 0.50
 - `AlignmentSettings.reference_mode`: `middle`
 - `AlignmentSettings.calibrate_before_align`: True
 - `StackingSettings.method`: `average`

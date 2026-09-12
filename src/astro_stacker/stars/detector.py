@@ -1,9 +1,7 @@
 """Star detection using photometry-based methods."""
 
 import numpy as np
-
 from astropy.stats import sigma_clipped_stats
-
 from photutils.detection import DAOStarFinder
 
 from .star_data import Star, StarCatalog
@@ -48,7 +46,9 @@ def detect_stars(image: np.ndarray, fwhm: float = 4.0, sigma: float = 5.0) -> St
 
     finder = DAOStarFinder(
         fwhm=fwhm,
-        threshold=sigma * std
+        threshold=sigma * std,
+        sharpness_range=(0.2, 1.0),
+        roundness_range=(-0.5, 0.5),
     )
 
     sources = finder(image - median)
