@@ -56,3 +56,52 @@ class StarCatalog:
             key=lambda s: s.flux,
             reverse=True
         )[:n])
+
+    def point_sources(
+        self,
+        n: int,
+        *,
+        minimum_sharpness: float = 0.20,
+        maximum_abs_roundness: float = 0.50,
+        width: int | None = None,
+        height: int | None = None,
+        grid_size: int = 6,
+        min_separation: float | None = None,
+    ) -> "StarCatalog":
+        """Return bright, point-like candidates suitable for alignment."""
+        candidates = [
+            star
+            for star in self.stars
+            if star.sharpness is not None
+            and star.roundness is not None
+            and star.sharpness >= minimum_sharpness
+            and abs(star.roundness) <= maximum_abs_roundness
+        ]
+        candidates.sort(key=lambda star: star.flux, reverse=True)
+
+        if not candidates:
+            return StarCatalog(candidates[:n])
+
+        if min_separation is None:
+            # Only needs to be large enough to collapse a single dense
+            # cluster (e.g. a bright nebula core, which is typically a few
+            # tens of pixels across) down to one anchor. It must NOT scale
+            # with the frame size -- tying it to width/height/grid_size
+            # turns this into a coarse whole-frame grid again and throws
+            # away the vast majority of ordinary, well-separated real stars
+            # (verified: on a 6022x4024 frame this previously forced ~500px
+            # spacing and cut 1400 real detections down to ~70 candidates).
+            min_separation = 25.0
+
+        min_sep_sq = min_separation ** 2
+        selected: list[Star] = []
+        for star in candidates:
+            if len(selected) >= n:
+                break
+            if all(
+                (star.x - s.x) ** 2 + (star.y - s.y) ** 2 >= min_sep_sq
+                for s in selected
+            ):
+                selected.append(star)
+
+        return StarCatalog(selected)

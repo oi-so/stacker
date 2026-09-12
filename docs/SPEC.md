@@ -50,6 +50,9 @@ flowchart TD
 - `CalibrationSettings.use_biases`: False
 - `AlignmentSettings.max_stars`: 500
 - `AlignmentSettings.sigma`: 5.0
+- `AlignmentSettings.star_fwhm`: 3.0
+- `AlignmentSettings.alignment_sharpness_min`: 0.20
+- `AlignmentSettings.alignment_roundness_max`: 0.50
 - `AlignmentSettings.reference_mode`: `middle`
 - `AlignmentSettings.calibrate_before_align`: True
 - `StackingSettings.method`: `average`
@@ -229,6 +232,22 @@ flowchart TD
 ### `scripts/check_frame_stats.py`
 
 - 画像またはフォルダを受け取り、各フレームの `dtype`, `shape`, `min`, `max`, `mean` を表示する。
+
+## 新星景スタック
+
+- 「スタック」メニューの「新星景スタック設定」から固定撮影または追尾撮影を選ぶ。
+- 星空は既存の恒星位置合わせ・Stack処理を使い、地上は位置合わせせず独立に1枚またはStackする。
+- 星空と地上のStack方法は独立設定で、Sigma値も地上用に保存する。
+- 地上マスクは自動推定後にPolygonで確認・編集できる。追加処理から保存したマスクを読み込める。
+- 光害フレーム、星空、地上、マスク、最終合成は個別に書き出し対象を選べる。
+- RAW/Bayer入力は新星景・HDR・タイムラプスでもDebayer後に合成し、出力をRGBカラーにする。
+- Sigma Clippingで全フレームが無効な画素は警告を出さず、無効画素として0にする。
+- 境界はGaussian平滑化またはマスクのFeatherのみをユーザーが選べる。
+- 一時memmapの既定保存先はPythonのシステム一時ディレクトリで、Stack終了時に削除する。
+  保存先、画像キャッシュ、Stackメモリ、Stackディスク上限、確保容量はプロジェクトごとに設定できる。
+- 新星景の設定、入力パス、マスクパス、出力チェックはプロジェクトへ保存する。
+- 電線・電柱・障害物マスクの作成は「追加処理」にあり、ブラシの直径と線・面の線幅は独立している。
+  ブラシ選択中は現在のブラシ直径を示す円を画像上に表示する。
 
 ## 既知の制限
 

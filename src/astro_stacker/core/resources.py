@@ -12,8 +12,8 @@ MiB = 1024**2
 GiB = 1024**3
 IMAGE_CACHE_BYTES = 1024 * MiB
 STACK_MEMORY_BYTES = 1024 * MiB
-STACK_DISK_BYTES = 8 * GiB
-DISK_RESERVE_BYTES = 8 * GiB
+STACK_DISK_BYTES = 128 * GiB
+DISK_RESERVE_BYTES = 4 * GiB
 
 
 def alignment_workers(frame_bytes: int, requested: int = 0) -> int:

@@ -73,6 +73,12 @@ class ImageManager:
             with self._lock:
                 self._pending.pop(pending_key, None)
 
+    def configure_cache(self, max_cache_bytes: int) -> None:
+        with self._lock:
+            self.max_cache_bytes = max(0, int(max_cache_bytes))
+            while self._cache and self._bytes > self.max_cache_bytes:
+                self._bytes -= self._cache.popitem(last=False)[1].nbytes
+
     def load(self, image: AstroImage) -> None:
         self.get_image(image)
 

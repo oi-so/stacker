@@ -22,7 +22,15 @@ from astro_stacker.platesolve.solver import (
     PlateSolveSettings,
 )
 from astro_stacker.project.project import Project
-from astro_stacker.project.settings import ObstacleMode, StackingMethod
+from astro_stacker.project.settings import (
+    AlignmentStrategy,
+    BoundaryMode,
+    GroundSource,
+    NightscapeCaptureMode,
+    NightscapeOutput,
+    ObstacleMode,
+    StackingMethod,
+)
 from astro_stacker.project.storage import load_project, save_project
 
 
@@ -241,6 +249,82 @@ def test_light_only_cosmetic_settings_roundtrip(tmp_path):
     assert restored_cosmetic.light_sigma == 12.0
     assert restored_cosmetic.light_persistence == 0.8
     assert restored.is_alignment_valid()
+
+
+def test_nightscape_settings_roundtrip(tmp_path):
+    project = make_project(tmp_path)
+    nightscape = project.settings.processing.nightscape
+    nightscape.output = NightscapeOutput.FINAL
+    nightscape.boundary_mode = BoundaryMode.LIGHT_POLLUTION
+    nightscape.ground_source = GroundSource.SEPARATE_FRAMES
+    nightscape.capture_mode = NightscapeCaptureMode.TRACKING
+    nightscape.ground_frame_paths = [project.light_frames[0].info.path]
+    nightscape.ground_mask_path = tmp_path / "ground-mask.fits"
+    nightscape.ground_use_single_frame = True
+    nightscape.ground_stack.method = StackingMethod.SIGMA_CLIP
+    nightscape.ground_stack.sigma = 2.5
+    nightscape.enabled_outputs = {"merged_sky", "ground_image", "ground_mask"}
+    nightscape.star_alignment = True
+    nightscape.ground_alignment = False
+    nightscape.use_star_mask = False
+    nightscape.split_mode = "manual"
+    nightscape.split_index = 2
+    nightscape.feather = 6.0
+    nightscape.blur_scale = 48.0
+    nightscape.transition_width = 20.0
+    nightscape.background_strength = 0.4
+    nightscape.smooth_boundary = False
+    nightscape.boundary_smoothing = "feather"
+    resources = project.settings.processing.resources
+    resources.temp_directory = tmp_path / "stack-temp"
+    resources.image_cache_bytes = 512 * 1024**2
+    resources.stack_memory_bytes = 768 * 1024**2
+    resources.stack_disk_bytes = 32 * 1024**3
+    resources.disk_reserve_bytes = 2 * 1024**3
+
+    path = tmp_path / "nightscape.astrostacker"
+    save_project(project, path)
+    restored, warnings = load_project(path)
+
+    assert not warnings
+    restored_nightscape = restored.settings.processing.nightscape
+    assert restored_nightscape.capture_mode is NightscapeCaptureMode.TRACKING
+    assert restored_nightscape.ground_source is GroundSource.SEPARATE_FRAMES
+    assert restored_nightscape.boundary_mode is BoundaryMode.LIGHT_POLLUTION
+    assert restored_nightscape.ground_frame_paths == [tmp_path / "0.fits"]
+    assert restored_nightscape.ground_mask_path == tmp_path / "ground-mask.fits"
+    assert restored_nightscape.ground_stack.method is StackingMethod.SIGMA_CLIP
+    assert restored_nightscape.ground_stack.sigma == 2.5
+    assert restored_nightscape.enabled_outputs == {
+        "merged_sky",
+        "ground_image",
+        "ground_mask",
+    }
+    assert restored_nightscape.use_star_mask is False
+    assert restored_nightscape.split_mode == "manual"
+    assert restored_nightscape.split_index == 2
+    assert restored_nightscape.background_strength == 0.4
+    assert restored_nightscape.smooth_boundary is False
+    assert restored_nightscape.boundary_smoothing == "feather"
+    restored_resources = restored.settings.processing.resources
+    assert restored_resources.temp_directory == tmp_path / "stack-temp"
+    assert restored_resources.image_cache_bytes == 512 * 1024**2
+    assert restored_resources.stack_memory_bytes == 768 * 1024**2
+    assert restored_resources.stack_disk_bytes == 32 * 1024**3
+    assert restored_resources.disk_reserve_bytes == 2 * 1024**3
+
+
+def test_timelapse_string_alignment_is_accepted(tmp_path):
+    project = make_project(tmp_path)
+    project.settings.processing.timelapse.alignment = "star_global"
+    path = tmp_path / "timelapse-string.astrostacker"
+
+    save_project(project, path)
+    restored, warnings = load_project(path)
+
+    assert not warnings
+    alignment = restored.settings.processing.timelapse.alignment
+    assert getattr(alignment, "value", alignment) == AlignmentStrategy.STAR_GLOBAL.value
 
 
 def test_project_cannot_overwrite_source_image(tmp_path):
